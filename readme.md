@@ -1,0 +1,1 @@
+A simple parser for [vc.ru](https://vc.ru), [dtf.ru](https://dtf.ru) and some similar websites wrapped in a Telegram bot.

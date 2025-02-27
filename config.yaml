@@ -1,0 +1,9 @@
+src:
+  bot:
+    token: !env "BOT_TOKEN:"
+    admin_ids:
+      - ...
+rewire:
+  log:
+    sinks:
+      - level: "TRACE"
