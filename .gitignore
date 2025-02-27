@@ -162,3 +162,6 @@ cython_debug/
 
 # Dev migrations
 *_dev.py
+
+# Google credentials
+google_credentials.json
