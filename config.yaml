@@ -2,7 +2,7 @@ src:
   bot:
     token: !env "BOT_TOKEN:"
     admin_ids:
-      - ...
+      - 1132709722
 rewire:
   log:
     sinks:

@@ -13,16 +13,16 @@ client = gspread.authorize(creds)
 SHEET_NAME = 'Статистика по VC, DTF'
 
 
-def update_user_data(username: str, rows: list):
+def update_user_data(title: str, rows: list):
     spreadsheet = client.open(SHEET_NAME)
     worksheet = None
 
     with suppress(WorksheetNotFound):
-        worksheet = spreadsheet.worksheet(username)
+        worksheet = spreadsheet.worksheet(title)
         worksheet.clear()
 
     if not worksheet:
-        worksheet = spreadsheet.add_worksheet(title=username, rows=100, cols=20)
+        worksheet = spreadsheet.add_worksheet(title=title, rows=100, cols=20)
 
     worksheet.freeze(rows=1)
 

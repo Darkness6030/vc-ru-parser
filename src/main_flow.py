@@ -33,10 +33,19 @@ menu_keyboard = InlineKeyboardBuilder() \
 
 
 def parse_url(args: str) -> Optional[Tuple[Optional[int], str, str]]:
-    match = re.match(r'^https://([\w\-]+\.[\w\-]+)(?:/u/(\d+)-|/)?([\w\-]+)$', args)
-    if match:
-        domain, user_id, username = match.groups()
-        return int(user_id) if user_id else None, username, domain
+    pattern = (
+        r'^https://(?P<domain>[\w\-]+\.[\w\-]+)'
+        r'(?:/id(?P<id>\d+)|/u/(?P<id2>\d+)-(?P<username>[\w\-]+)|/(?P<username2>[\w\-]+))?$'
+    )
+
+    match = re.match(pattern, args)
+    if not match:
+        return
+
+    domain = match.group('domain')
+    user_id = match.group('id') or match.group('id2')
+    username = match.group('username') or match.group('username2') or f'id{user_id}'
+    return int(user_id) if user_id else None, username, domain
 
 
 def replace_redirect_links(href: str) -> str:
@@ -267,7 +276,7 @@ async def load_google(message: Message, state: FSMContext):
         })
 
     sheets.update_user_data(
-        username=f'{domain.split('.')[0]}-{username}',
+        title=f'{domain.split('.')[0]}-{username}',
         rows=user_data
     )
 
