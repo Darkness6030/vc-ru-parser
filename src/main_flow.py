@@ -32,20 +32,28 @@ menu_keyboard = InlineKeyboardBuilder() \
     .as_markup()
 
 
-def parse_url(args: str) -> Optional[Tuple[Optional[int], str, str]]:
-    pattern = (
-        r'^https://(?P<domain>[\w\-]+\.[\w\-]+)'
-        r'(?:/id(?P<id>\d+)|/u/(?P<id2>\d+)-(?P<username>[\w\-]+)|/(?P<username2>[\w\-]+))?$'
-    )
+async def parse_url(args: str) -> Optional[Tuple[str, str, Optional[int]]]:
+    parsed = urlparse(args)
+    domain = parsed.netloc.lower()
+    path = parsed.path.strip('/')
 
-    match = re.match(pattern, args)
+    if not domain or not path:
+        return None
+
+    if domain == 'tenchat.ru':
+        return domain, path, None
+
+    match = re.match(r'(id(\d+))|u/(\d+)-([\w\-]+)|([\w\-]+)', path)
     if not match:
-        return
+        return None
 
-    domain = match.group('domain')
-    user_id = match.group('id') or match.group('id2')
-    username = match.group('username') or match.group('username2') or f'id{user_id}'
-    return int(user_id) if user_id else None, username, domain
+    user_id = match.group(2) or match.group(3)
+    username = match.group(4) or match.group(5) or f'id{user_id}'
+
+    if not user_id:
+        user_id = await api.fetch_user_id(domain, username)
+
+    return domain, username, int(user_id)
 
 
 def replace_redirect_links(href: str) -> str:
@@ -156,7 +164,7 @@ async def cancel_parsing_callback(callback: CallbackQuery, state: FSMContext):
 
 
 async def load_json(message: Message, state: FSMContext):
-    parsed_args = parse_url(message.text)
+    parsed_args = await parse_url(message.text)
     if not parsed_args:
         await message.reply('Ошибка: Неверные аргументы или формат URL. Попробуйте ещё раз:', reply_markup=ForceReply())
         return
@@ -164,10 +172,7 @@ async def load_json(message: Message, state: FSMContext):
     amount = await state.get_value('amount')
     await state.clear()
 
-    user_id, username, domain = parsed_args
-    if not user_id:
-        user_id = await api.fetch_user_id(domain, username)
-
+    domain, username, user_id = parsed_args
     started_message = await message.answer(
         f'Начат парсинг постов для пользователя {username}...',
         reply_markup=InlineKeyboardBuilder()
@@ -175,7 +180,11 @@ async def load_json(message: Message, state: FSMContext):
         .as_markup()
     )
 
-    user_posts = await api.fetch_user_posts(domain, user_id, amount or 999)
+    if domain == 'tenchat.ru':
+        user_posts = await api.fetch_tenchat_posts(username, amount)
+    else:
+        user_posts = await api.fetch_user_posts(domain, user_id, amount or 999)
+
     if await state.get_value('cancelled'):
         await state.clear()
         return
@@ -194,28 +203,53 @@ async def load_json(message: Message, state: FSMContext):
             post_directory = os.path.join(user_directory, str(post_data['id']))
             os.makedirs(post_directory, exist_ok=True)
 
-            for block in post_data['blocks']:
-                if block['type'] == 'media':
-                    for item in block['data']['items']:
-                        if await state.get_value('cancelled'):
-                            await state.clear()
-                            return
+            if domain == 'tenchat.ru':
+                pictures = post_data.get('pictures', [])
+                for index, picture in enumerate(pictures):
+                    link = picture.get('link')
+                    if not link:
+                        continue
 
-                        image_data = item['image']['data']
-                        url = f"https://leonardo.osnova.io/{image_data['uuid']}"
+                    if await state.get_value('cancelled'):
+                        await state.clear()
+                        return
 
-                        async with session.get(url) as response:
-                            if not response.ok:
-                                continue
+                    async with session.get(link) as response:
+                        if not response.ok:
+                            continue
 
-                            content_type = response.headers.get('Content-Type')
-                            extension = content_type.split('/')[-1] if content_type else image_data['type']
+                        content_type = response.headers.get('Content-Type')
+                        extension = content_type.split('/')[-1] if content_type else 'jpg'
 
-                            image_path = os.path.join(post_directory, f"{image_data['uuid']}.{extension}")
-                            image_data['path'] = image_path
+                        image_path = os.path.join(post_directory, f"image_{index}.{extension}")
+                        picture['path'] = image_path
 
-                            with open(image_path, 'wb') as file:
-                                file.write(await response.content.read())
+                        with open(image_path, 'wb') as file:
+                            file.write(await response.content.read())
+
+            else:
+                for block in post_data['blocks']:
+                    if block['type'] == 'media':
+                        for item in block['data']['items']:
+                            if await state.get_value('cancelled'):
+                                await state.clear()
+                                return
+
+                            image_data = item['image']['data']
+                            url = f"https://leonardo.osnova.io/{image_data['uuid']}"
+
+                            async with session.get(url) as response:
+                                if not response.ok:
+                                    continue
+
+                                content_type = response.headers.get('Content-Type')
+                                extension = content_type.split('/')[-1] if content_type else image_data['type']
+
+                                image_path = os.path.join(post_directory, f"{image_data['uuid']}.{extension}")
+                                image_data['path'] = image_path
+
+                                with open(image_path, 'wb') as file:
+                                    file.write(await response.content.read())
 
             post_json_path = os.path.join(post_directory, 'data.json')
             with open(post_json_path, 'w+') as post_file:
@@ -233,7 +267,7 @@ async def load_json(message: Message, state: FSMContext):
 
 
 async def load_google(message: Message, state: FSMContext):
-    parsed_args = parse_url(message.text)
+    parsed_args = await parse_url(message.text)
     if not parsed_args:
         await message.reply('Ошибка: Неверные аргументы или формат URL. Попробуйте ещё раз:', reply_markup=ForceReply())
         return
@@ -241,10 +275,7 @@ async def load_google(message: Message, state: FSMContext):
     amount = await state.get_value('amount')
     await state.clear()
 
-    user_id, username, domain = parsed_args
-    if not user_id:
-        user_id = await api.fetch_user_id(domain, username)
-
+    domain, username, user_id = parsed_args
     started_message = await message.answer(
         f'Начат парсинг постов для пользователя {username}...',
         reply_markup=InlineKeyboardBuilder()
@@ -252,7 +283,11 @@ async def load_google(message: Message, state: FSMContext):
         .as_markup()
     )
 
-    user_posts = await api.fetch_user_posts(domain, user_id, amount or 999)
+    if domain == 'tenchat.ru':
+        user_posts = await api.fetch_tenchat_posts(username, amount)
+    else:
+        user_posts = await api.fetch_user_posts(domain, user_id, amount or 999)
+
     if await state.get_value('cancelled'):
         await state.clear()
         return
@@ -263,20 +298,32 @@ async def load_google(message: Message, state: FSMContext):
     user_data = []
     for post_data in user_posts:
         date_now = datetime.now(pytz.timezone('Europe/Moscow'))
-        date_published = datetime.fromtimestamp(post_data['date'], pytz.timezone('Europe/Moscow'))
 
-        user_data.append({
-            'ID': post_data.get('id'),
-            'URL': post_data.get('url'),
-            'Название статьи': post_data['title'],
-            'Просмотры': post_data['counters']['hits'],
-            'Добавлено': date_published.strftime('%Y-%m-%d %H:%M:%S'),
-            'Автор': post_data['author']['name'],
-            'Парсинг': date_now.strftime('%Y-%m-%d %H:%M:%S')
-        })
+        if domain == 'tenchat.ru':
+            date_published = datetime.fromisoformat(post_data['publishDate'])
+            user_data.append({
+                'ID': post_data['id'],
+                'URL': f'https://tenchat.ru/media/{post_data['titleTransliteration']}',
+                'Название статьи': post_data['title'],
+                'Просмотры': post_data['viewCount'],
+                'Добавлено': date_published.strftime('%Y-%m-%d %H:%M:%S'),
+                'Автор': f'{post_data['user']['name'] or ''} {post_data['user']['surname'] or ''}'.strip(),
+                'Парсинг': date_now.strftime('%Y-%m-%d %H:%M:%S')
+            })
+        else:
+            date_published = datetime.fromtimestamp(post_data['date'], pytz.timezone('Europe/Moscow'))
+            user_data.append({
+                'ID': post_data.get('id'),
+                'URL': post_data.get('url'),
+                'Название статьи': post_data['title'],
+                'Просмотры': post_data['counters']['hits'],
+                'Добавлено': date_published.strftime('%Y-%m-%d %H:%M:%S'),
+                'Автор': post_data['author']['name'],
+                'Парсинг': date_now.strftime('%Y-%m-%d %H:%M:%S')
+            })
 
     sheets.update_user_data(
-        title=f'{domain.split('.')[0]}-{username}',
+        title=f'{domain.split('.')[0][:3]}-{username}',
         rows=user_data
     )
 
