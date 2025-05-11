@@ -15,3 +15,7 @@ class ParseAllCallback(CallbackData, prefix='parse_all'):
 
 class CancelParsingCallback(CallbackData, prefix='cancel_parsing'):
     pass
+
+
+class RegularParsingCallback(CallbackData, prefix='regular_parsing'):
+    pass

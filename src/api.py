@@ -12,7 +12,9 @@ async def fetch_user_id(domain: str, user_url: str):
 
     async with ClientSession() as session:
         async with session.get(base_url, params=params) as response:
-            response.raise_for_status()
+            if not response.ok:
+                return None
+
             result = await response.json()
             return result['result']['id']
 

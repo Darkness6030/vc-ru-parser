@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import suppress
 
 import gspread
@@ -13,7 +14,7 @@ client = gspread.authorize(creds)
 SHEET_NAME = 'Статистика по VC, DTF'
 
 
-def update_user_data(title: str, rows: list):
+def sync_update_user_data(title: str, rows: list):
     spreadsheet = client.open(SHEET_NAME)
     worksheet = None
 
@@ -89,3 +90,7 @@ def update_user_data(title: str, rows: list):
     set_column_width(worksheet, 'A', max_length * 9)
     set_column_width(worksheet, 'B', 100)
     set_column_width(worksheet, 'C', 400)
+
+
+async def update_user_data(title: str, rows: list):
+    await asyncio.to_thread(sync_update_user_data, title, rows)
