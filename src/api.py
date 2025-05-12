@@ -1,4 +1,5 @@
 import asyncio
+from typing import Optional
 
 from aiohttp import ClientSession
 
@@ -19,15 +20,14 @@ async def fetch_user_id(domain: str, user_url: str):
             return result['result']['id']
 
 
-async def fetch_user_posts(domain: str, user_id: int, posts_amount: int):
+async def fetch_user_posts(domain: str, user_id: int, posts_amount: Optional[int] = None, last_post_id: Optional[int] = None):
     base_url = f'https://api.{domain}/v2.8/timeline'
     params = {'markdown': 'false', 'sorting': 'new', 'subsitesIds': user_id}
 
     posts = []
     async with ClientSession() as session:
-        while len(posts) < posts_amount:
+        while True:
             await asyncio.sleep(1)
-
             async with session.get(base_url, params=params) as response:
                 response.raise_for_status()
                 result = await response.json()
@@ -36,20 +36,30 @@ async def fetch_user_posts(domain: str, user_id: int, posts_amount: int):
                 if not items:
                     break
 
-                posts.extend([item['data'] for item in items])
+                for item in items:
+                    post = item['data']
+                    if last_post_id and post['id'] <= last_post_id:
+                        return posts
+
+                    posts.append(post)
+                    if posts_amount and len(posts) >= posts_amount:
+                        return posts
 
                 params['lastId'] = result.get('result', {}).get('lastId')
                 params['lastSortingValue'] = result.get('result', {}).get('lastSortingValue')
 
-    return posts[:posts_amount]
+                if not params['lastId']:
+                    break
+
+    return posts
 
 
-async def fetch_tenchat_posts(username: str, posts_amount):
+async def fetch_tenchat_posts(username: str, posts_amount: Optional[int] = None, last_post_id: Optional[int] = None):
     page = 0
     posts = []
 
     async with ClientSession() as session:
-        while len(posts) < posts_amount:
+        while True:
             async with session.get(f'{TENCHAT_BASE_URL}/{username}?page={page}&size={TENCHAT_BASE_SIZE}') as response:
                 response.raise_for_status()
                 data = await response.json()
@@ -59,12 +69,17 @@ async def fetch_tenchat_posts(username: str, posts_amount):
                     break
 
                 for item in content:
+                    if last_post_id and item['id'] <= last_post_id:
+                        return posts
+
                     posts.append(item)
+                    if posts_amount and len(posts) >= posts_amount:
+                        return posts
 
-            if len(content) < TENCHAT_BASE_SIZE:
-                break
+                if len(content) < TENCHAT_BASE_SIZE:
+                    break
 
-            page += 1
-            await asyncio.sleep(1)
+                page += 1
+                await asyncio.sleep(1)
 
-    return posts[:posts_amount]
+    return posts

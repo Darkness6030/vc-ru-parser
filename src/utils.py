@@ -1,7 +1,7 @@
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, date
 from typing import Any, Optional, Tuple
 from urllib.parse import unquote, urlparse, parse_qs
 
@@ -12,6 +12,13 @@ from src import sheets, api
 
 OUTPUT_DIRECTORY = 'output'
 LINK_TAG_PATTERN = r'<a\s+[^>]*?href=("(.*?)")[^>]*>'
+
+
+def parse_time(text: str):
+    try:
+        return datetime.strptime(text, '%H:%M').time()
+    except ValueError:
+        return None
 
 
 async def parse_url(args: str) -> Optional[Tuple[str, str, Optional[int]]]:
@@ -70,7 +77,7 @@ def clean_json_links(data: Any) -> Any:
 
 
 async def download_posts_files(domain: str, username: str, user_posts: list):
-    user_directory = os.path.join(OUTPUT_DIRECTORY, f'{domain.split(".")[0]}-{username}')
+    user_directory = os.path.join(OUTPUT_DIRECTORY, f'{domain.split('.')[0]}-{username}')
     async with ClientSession() as session:
         for post_data in user_posts:
             post_directory = os.path.join(user_directory, str(post_data['id']))
@@ -90,7 +97,7 @@ async def download_posts_files(domain: str, username: str, user_posts: list):
                         content_type = response.headers.get('Content-Type')
                         extension = content_type.split('/')[-1] if content_type else 'jpg'
 
-                        image_path = os.path.join(post_directory, f"image_{index}.{extension}")
+                        image_path = os.path.join(post_directory, f'image_{index}.{extension}')
                         picture['path'] = image_path
 
                         with open(image_path, 'wb') as file:
@@ -101,7 +108,7 @@ async def download_posts_files(domain: str, username: str, user_posts: list):
                     if block['type'] == 'media':
                         for item in block['data']['items']:
                             image_data = item['image']['data']
-                            url = f"https://leonardo.osnova.io/{image_data['uuid']}"
+                            url = f'https://leonardo.osnova.io/{image_data['uuid']}'
 
                             async with session.get(url) as response:
                                 if not response.ok:
@@ -110,7 +117,7 @@ async def download_posts_files(domain: str, username: str, user_posts: list):
                                 content_type = response.headers.get('Content-Type')
                                 extension = content_type.split('/')[-1] if content_type else image_data['type']
 
-                                image_path = os.path.join(post_directory, f"{image_data['uuid']}.{extension}")
+                                image_path = os.path.join(post_directory, f'{image_data['uuid']}.{extension}')
                                 image_data['path'] = image_path
 
                                 with open(image_path, 'wb') as file:
@@ -156,6 +163,65 @@ async def unload_posts_to_sheets(domain: str, username: str, user_posts: list):
             })
 
     await sheets.update_user_data(
-        title=f'{domain.split(".")[0][:3]}-{username}',
+        title=f'{domain.split('.')[0][:3]}-{username}',
         rows=user_data
     )
+
+
+def extract_user_data(domain: str, username: str, user_posts: list[dict]) -> dict:
+    name = user_posts[0]['author']['name']
+
+    today_posts = 0
+    today_views = 0
+    total_posts = 0
+    total_views = 0
+
+    for post in user_posts:
+        post_date = datetime.fromtimestamp(post['date']).date()
+        views = post['counters']['views']
+        total_posts += 1
+        total_views += views
+
+        if post_date == date.today():
+            today_posts += 1
+            today_views += views
+
+    return {
+        'url': f'https://{domain}/{username}',
+        'name': name,
+        'today_posts': today_posts,
+        'today_views': today_views,
+        'total_posts': total_posts,
+        'total_views': total_views,
+    }
+
+
+def extract_tenchat_user_data(username: str, user_posts: list[dict]) -> dict:
+    user = user_posts[0]['user']
+    name = user.get('name', '')
+    surname = user.get('surname', '')
+
+    today_posts = 0
+    today_views = 0
+    total_posts = 0
+    total_views = 0
+
+    for post in user_posts:
+        publish_date = datetime.fromisoformat(post['publishDate'].rstrip('Z')).date()
+        views = post['viewCount']
+        total_posts += 1
+        total_views += views
+
+        if publish_date == date.today():
+            today_posts += 1
+            today_views += views
+
+    return {
+        'url': f'https://tenchat.ru/{username}',
+        'name': f'{name} {surname}'.strip(),
+        'surname': surname,
+        'today_posts': today_posts,
+        'today_views': today_views,
+        'total_posts': total_posts,
+        'total_views': total_views,
+    }

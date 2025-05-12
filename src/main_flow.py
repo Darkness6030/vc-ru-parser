@@ -1,4 +1,6 @@
-from aiogram import Dispatcher, Router
+from typing import Match
+
+from aiogram import Dispatcher, Router, F
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, FSInputFile, CallbackQuery, ForceReply, ReplyKeyboardRemove
@@ -6,8 +8,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiohttp import ClientError
 from rewire import simple_plugin
 
-from src import api, bot, utils
-from src.callbacks import LoadModeCallback, CancelParsingCallback, ParseAllCallback, ParseAmountCallback, RegularParsingCallback
+from src import api, bot, utils, storage
+from src.callbacks import LoadModeCallback, CancelParsingCallback, ParseAllCallback, ParseAmountCallback, RegularParsingCallback, ParseNowCallback, TogglePauseCallback, ParseAccountCallback, AccountInfoCallback, AddAccountCallback, AccountsCallback, PeriodicityCallback, EditAccountCallback, DeleteAccountCallback
 from src.states import UserState
 
 plugin = simple_plugin()
@@ -20,6 +22,12 @@ menu_keyboard = InlineKeyboardBuilder() \
     .adjust(1) \
     .as_markup()
 
+regular_parsing_keyboard = InlineKeyboardBuilder() \
+    .button(text='Назад', callback_data=RegularParsingCallback()) \
+    .as_markup()
+
+PARSING_MODES = ['табл', 'серв', 'оба']
+
 
 @router.message(CommandStart())
 async def start_command(message: Message):
@@ -31,7 +39,7 @@ async def start_command(message: Message):
 
 @router.callback_query(LoadModeCallback.filter())
 async def load_mode_callback(callback: CallbackQuery, callback_data: LoadModeCallback, state: FSMContext):
-    await state.set_state(UserState.amount)
+    await state.set_state(UserState.amount_select)
     await state.update_data(mode=callback_data.mode)
     await callback.message.answer(
         'Выберите количество постов:',
@@ -43,7 +51,7 @@ async def load_mode_callback(callback: CallbackQuery, callback_data: LoadModeCal
     )
 
 
-@router.callback_query(UserState.amount, ParseAmountCallback.filter())
+@router.callback_query(UserState.amount_select, ParseAmountCallback.filter())
 async def parse_amount_callback(callback: CallbackQuery, state: FSMContext):
     await state.set_state(UserState.amount_input)
     await callback.message.answer(
@@ -52,10 +60,10 @@ async def parse_amount_callback(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(UserState.amount, ParseAllCallback.filter())
+@router.callback_query(UserState.amount_select, ParseAllCallback.filter())
 async def parse_all_callback(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(UserState.url)
-    await state.update_data(amount=999999)
+    await state.set_state(UserState.url_select)
+    await state.update_data(amount=None)
     await callback.message.answer(
         'Введите ссылку на пользователя:',
         reply_markup=ForceReply()
@@ -69,7 +77,7 @@ async def amount_handler(message: Message, state: FSMContext):
     if amount <= 0:
         return await message.answer('⚠️ Неверное количество постов. Попробуйте ещё раз:', reply_markup=ForceReply())
 
-    await state.set_state(UserState.url)
+    await state.set_state(UserState.url_select)
     await state.update_data(amount=amount)
     await message.answer(
         'Введите ссылку на пользователя:',
@@ -77,7 +85,7 @@ async def amount_handler(message: Message, state: FSMContext):
     )
 
 
-@router.message(UserState.url)
+@router.message(UserState.url_select)
 async def url_handler(message: Message, state: FSMContext):
     loading_message = await message.answer('Загрузка...', reply_markup=ReplyKeyboardRemove())
     await loading_message.delete()
@@ -96,17 +104,12 @@ async def cancel_parsing_callback(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer('🛑 Парсинг отменён.', reply_markup=menu_keyboard)
 
 
-@router.callback_query(RegularParsingCallback.filter())
-async def regular_parsing_callback(callback: CallbackQuery, state: FSMContext):
-    pass
-
-
 async def load_json(message: Message, state: FSMContext):
     parsed_args = await utils.parse_url(message.text)
     if not parsed_args:
         return await message.reply('❌ Ошибка: Неверные аргументы или формат URL. Попробуйте ещё раз:', reply_markup=ForceReply())
 
-    amount = await state.get_value('amount', 999999)
+    amount = await state.get_value('amount')
     await state.clear()
 
     domain, username, user_id = parsed_args
@@ -149,7 +152,7 @@ async def load_google(message: Message, state: FSMContext):
     if not parsed_args:
         return await message.reply('❌ Ошибка: Неверные аргументы или формат URL. Попробуйте ещё раз:', reply_markup=ForceReply())
 
-    amount = await state.get_value('amount', 999999)
+    amount = await state.get_value('amount')
     await state.clear()
 
     domain, username, user_id = parsed_args
@@ -179,6 +182,226 @@ async def load_google(message: Message, state: FSMContext):
         f'✅ Все данные пользователя {username} успешно сохранены в Google таблицу.',
         reply_markup=menu_keyboard
     )
+
+
+@router.callback_query(RegularParsingCallback.filter())
+async def regular_parsing_callback(callback: CallbackQuery):
+    is_paused = storage.is_paused()
+    pause_status = '⏸️ Парсинг: пауза' if is_paused else '✅ Парсинг: работает'
+
+    await callback.message.edit_text(
+        '⚙️ Настройки регулярного парсинга:',
+        reply_markup=InlineKeyboardBuilder()
+        .button(text='👤 Кого парсим', callback_data=AccountsCallback())
+        .button(text='⏰ Периодичность', callback_data=PeriodicityCallback())
+        .button(text=pause_status, callback_data=TogglePauseCallback())
+        .button(text='🔄 Спарсить сейчас', callback_data=ParseNowCallback(mode='menu'))
+        .adjust(1)
+        .as_markup()
+    )
+
+
+@router.callback_query(PeriodicityCallback.filter())
+async def periodicity_callback(callback: CallbackQuery, state: FSMContext):
+    periodicity = storage.get_periodicity()
+    if periodicity:
+        await state.set_state(UserState.periodicity_input)
+        await callback.message.answer(
+            'Текущая периодичность: '
+            f'\nКаждые {periodicity.interval} дней, в {periodicity.time.strftime('%H:%M')} по Москве.\n'
+            '\nВведите новую периодичность (Пример: 1 21:00):',
+            reply_markup=ForceReply()
+        )
+    else:
+        await state.set_state(UserState.periodicity_input)
+        await callback.message.answer(
+            'Периодичность пока не задана.'
+            '\nВведите новую периодичность (Пример: 1 21:00):',
+            reply_markup=ForceReply()
+        )
+
+
+@router.message(UserState.periodicity_input, F.text.regexp(r"^(\d+)\s+(\d{1,2}:\d{2})$").as_("match"))
+async def periodicity_input(message: Message, state: FSMContext, match: Match[str]):
+    interval = match.group(1)
+    time_str = match.group(2)
+
+    parsed_time = utils.parse_time(time_str)
+    if not parsed_time:
+        return await message.reply('⚠️ Неверный формат времени. Используйте HH:MM (например: 21:00)', reply_markup=ForceReply())
+
+    storage.set_periodicity(
+        interval=interval,
+        time=parsed_time
+    )
+
+    await state.clear()
+    await message.answer('✅ Периодичность обновлена!', reply_markup=regular_parsing_keyboard)
+
+
+@router.callback_query(AccountsCallback.filter())
+async def accounts_callback(callback: CallbackQuery):
+    inline_keyboard = InlineKeyboardBuilder()
+    inline_keyboard.button(text='➕ Добавить аккаунт', callback_data=AddAccountCallback())
+
+    for account in storage.get_accounts():
+        inline_keyboard.button(
+            text=f'{account.domain} - {account.username}',
+            callback_data=AccountInfoCallback(account_id=account.id)
+        )
+
+    await callback.message.edit_text(
+        '👤 Кого парсим:',
+        reply_markup=inline_keyboard
+        .button(text='Назад', callback_data=RegularParsingCallback())
+        .adjust(1)
+        .as_markup()
+    )
+
+
+@router.callback_query(AddAccountCallback.filter())
+async def add_account_callback(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(UserState.add_account_input)
+    await callback.message.answer(
+        'Введите данные аккаунта в формате:\n'
+        '<code>ссылка тип_парсинга (табл/серв/оба)</code>\n'
+        'Пример: <code>https://dtf.ru/danny табл</code>',
+        reply_markup=ForceReply()
+    )
+
+
+@router.message(UserState.add_account_input, F.text.regexp(r'^\S+\s+\S+$'))
+async def add_account_input(message: Message, state: FSMContext):
+    url, mode = message.text.split(maxsplit=2)
+    if mode not in PARSING_MODES:
+        return await message.reply(
+            '⚠️ Неверный формат. Пример: <code>https://dtf.ru/danny табл</code>',
+            reply_markup=ForceReply()
+        )
+
+    parsed_args = await utils.parse_url(url)
+    if not parsed_args:
+        return await message.reply(
+            '❌ Ошибка: Неверные аргументы или формат URL. Попробуйте ещё раз:',
+            reply_markup=ForceReply()
+        )
+
+    domain, username, user_id = parsed_args
+    storage.add_account(
+        url=url,
+        mode=mode,
+        domain=domain,
+        username=username,
+        user_id=user_id
+    )
+
+    await state.clear()
+    await message.answer('✅ Аккаунт добавлен!', reply_markup=regular_parsing_keyboard)
+
+
+@router.callback_query(AccountInfoCallback.filter())
+async def account_info_callback(callback: CallbackQuery, callback_data: AccountInfoCallback):
+    account = storage.get_account(callback_data.account_id)
+    if not account:
+        return
+
+    await callback.message.edit_text(
+        f'🔗 {account.url}'
+        f'\nРежим: {account.mode}'
+        '\nВыберите действие:',
+        reply_markup=InlineKeyboardBuilder()
+        .button(text='✏️ Редактировать', callback_data=EditAccountCallback(account_id=callback_data.account_id))
+        .button(text='❌ Удалить', callback_data=DeleteAccountCallback(account_id=callback_data.account_id))
+        .button(text='🔄 Спарсить сейчас', callback_data=ParseAccountCallback(account_id=callback_data.account_id))
+        .button(text='Назад', callback_data=AccountsCallback())
+        .adjust(1)
+        .as_markup()
+    )
+
+
+@router.callback_query(EditAccountCallback.filter())
+async def edit_account_callback(callback: CallbackQuery, callback_data: EditAccountCallback, state: FSMContext):
+    account = storage.get_account(callback_data.account_id)
+    if not account:
+        return
+
+    await state.set_state(UserState.edit_account_input)
+    await state.update_data(account_id=callback_data.account_id)
+    await callback.message.answer(
+        'Введите новые данные в формате:\n'
+        '<code>ссылка тип_парсинга (табл/серв/оба)</code>\n'
+        'Пример: <code>https://dtf.ru/danny табл</code>',
+        reply_markup=ForceReply()
+    )
+
+
+@router.message(UserState.add_account_input, F.text.regexp(r'^\S+\s+\S+$'))
+async def account_edit_input(message: Message, state: FSMContext):
+    url, mode = message.text.split(maxsplit=2)
+    if mode not in PARSING_MODES:
+        return await message.reply(
+            '⚠️ Неверный формат. Пример: <code>https://dtf.ru/danny табл</code>',
+            reply_markup=ForceReply()
+        )
+
+    parsed_args = await utils.parse_url(url)
+    if not parsed_args:
+        return await message.reply(
+            '❌ Ошибка: Неверные аргументы или формат URL. Попробуйте ещё раз:',
+            reply_markup=ForceReply()
+        )
+
+    account_id = await state.get_value('account_id')
+    domain, username, user_id = parsed_args
+    storage.update_account(
+        account_id=account_id,
+        url=url,
+        mode=mode,
+        domain=domain,
+        username=username,
+        user_id=user_id
+    )
+
+    await state.clear()
+    await message.answer('✅ Аккаунт обновлён!', reply_markup=regular_parsing_keyboard)
+
+
+@router.callback_query(DeleteAccountCallback.filter())
+async def delete_account_callback(callback: CallbackQuery, callback_data: DeleteAccountCallback):
+    account = storage.get_account(callback_data.account_id)
+    if not account:
+        return
+
+    storage.delete_account(callback_data.account_id)
+    await callback.message.answer('✅ Аккаунт удалён!', reply_markup=regular_parsing_keyboard)
+
+
+@router.callback_query(ParseAccountCallback.filter())
+async def account_parse_callback(callback: CallbackQuery, callback_data: ParseAccountCallback):
+    await callback.message.edit_text(f'⚙️ Запуск парсинга аккаунта #{callback_data.account_id}...\n(Пока только имитация!)')
+
+
+@router.callback_query(TogglePauseCallback.filter())
+async def toggle_pause_callback(callback: CallbackQuery):
+    storage.toggle_pause()
+    await regular_parsing_callback(callback)
+
+
+@router.callback_query(ParseNowCallback.filter())
+async def parse_now_callback(callback: CallbackQuery, callback_data: ParseNowCallback):
+    if callback_data.mode == 'menu':
+        return await callback.message.edit_text(
+            'Выберите режим парсинга сейчас:',
+            reply_markup=InlineKeyboardBuilder()
+            .button(text='По параметрам', callback_data=ParseNowCallback(mode='params'))
+            .button(text='В таблицу', callback_data=ParseNowCallback(mode='table'))
+            .button(text='На сервер', callback_data=ParseNowCallback(mode='server'))
+            .button(text='Назад', callback_data=RegularParsingCallback())
+            .adjust(1)
+            .as_markup()
+        )
+
+    await callback.message.edit_text(f'⚙️ Запуск парсинга сейчас в режиме: {callback_data.mode} (пока имитация)')
 
 
 @plugin.setup()

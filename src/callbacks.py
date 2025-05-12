@@ -19,3 +19,38 @@ class CancelParsingCallback(CallbackData, prefix='cancel_parsing'):
 
 class RegularParsingCallback(CallbackData, prefix='regular_parsing'):
     pass
+
+
+class ParseNowCallback(CallbackData, prefix='parse_now'):
+    mode: str
+
+
+class PeriodicityCallback(CallbackData, prefix='periodicity'):
+    pass
+
+
+class AccountsCallback(CallbackData, prefix='accounts'):
+    pass
+
+
+class TogglePauseCallback(CallbackData, prefix='start_pause'):
+    pass
+
+
+class AddAccountCallback(CallbackData, prefix='add_account'):
+    pass
+
+
+class AccountInfoCallback(CallbackData, prefix='account_info'):
+    account_id: int
+
+
+class EditAccountCallback(CallbackData, prefix='edit_account'):
+    account_id: int
+
+class DeleteAccountCallback(CallbackData, prefix='delete_account'):
+    account_id: int
+
+
+class ParseAccountCallback(CallbackData, prefix='parse_account'):
+    account_id: int
