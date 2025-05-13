@@ -17,6 +17,10 @@ class CancelParsingCallback(CallbackData, prefix='cancel_parsing'):
     pass
 
 
+class MainMenuCallback(CallbackData, prefix='main_menu'):
+    pass
+
+
 class RegularParsingCallback(CallbackData, prefix='regular_parsing'):
     pass
 
@@ -47,6 +51,7 @@ class AccountInfoCallback(CallbackData, prefix='account_info'):
 
 class EditAccountCallback(CallbackData, prefix='edit_account'):
     account_id: int
+
 
 class DeleteAccountCallback(CallbackData, prefix='delete_account'):
     account_id: int

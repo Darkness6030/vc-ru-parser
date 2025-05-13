@@ -41,6 +41,8 @@ async def parse_url(args: str) -> Optional[Tuple[str, str, Optional[int]]]:
 
     if not user_id:
         user_id = await api.fetch_user_id(domain, username)
+        if not user_id:
+            return None
 
     return domain, username, int(user_id) if user_id else None
 
@@ -178,7 +180,7 @@ def extract_user_data(domain: str, username: str, user_posts: list[dict]) -> dic
 
     for post in user_posts:
         post_date = datetime.fromtimestamp(post['date']).date()
-        views = post['counters']['views']
+        views = post['counters']['hits']
         total_posts += 1
         total_views += views
 

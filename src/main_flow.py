@@ -1,3 +1,4 @@
+import asyncio
 from typing import Match
 
 from aiogram import Dispatcher, Router, F
@@ -9,7 +10,8 @@ from aiohttp import ClientError
 from rewire import simple_plugin
 
 from src import api, bot, utils, storage
-from src.callbacks import LoadModeCallback, CancelParsingCallback, ParseAllCallback, ParseAmountCallback, RegularParsingCallback, ParseNowCallback, TogglePauseCallback, ParseAccountCallback, AccountInfoCallback, AddAccountCallback, AccountsCallback, PeriodicityCallback, EditAccountCallback, DeleteAccountCallback
+from src.callbacks import LoadModeCallback, CancelParsingCallback, ParseAllCallback, ParseAmountCallback, RegularParsingCallback, ParseNowCallback, TogglePauseCallback, ParseAccountCallback, AccountInfoCallback, AddAccountCallback, AccountsCallback, PeriodicityCallback, EditAccountCallback, DeleteAccountCallback, MainMenuCallback
+from src.schedules import parse_account
 from src.states import UserState
 
 plugin = simple_plugin()
@@ -24,17 +26,25 @@ menu_keyboard = InlineKeyboardBuilder() \
 
 regular_parsing_keyboard = InlineKeyboardBuilder() \
     .button(text='Назад', callback_data=RegularParsingCallback()) \
+    .button(text='Назад в меню', callback_data=MainMenuCallback()) \
     .as_markup()
 
 PARSING_MODES = ['табл', 'серв', 'оба']
 
 
 @router.message(CommandStart())
-async def start_command(message: Message):
+async def start_command(message: Message, state: FSMContext):
     if not bot.is_admin(message.from_user.id):
         return await message.answer('⛔ Нет доступа!')
 
+    await state.clear()
     await message.answer('📋 Главное меню:', reply_markup=menu_keyboard)
+
+
+@router.callback_query(MainMenuCallback.filter())
+async def main_menu_callback(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.answer('📋 Главное меню:', reply_markup=menu_keyboard)
 
 
 @router.callback_query(LoadModeCallback.filter())
@@ -196,6 +206,7 @@ async def regular_parsing_callback(callback: CallbackQuery):
         .button(text='⏰ Периодичность', callback_data=PeriodicityCallback())
         .button(text=pause_status, callback_data=TogglePauseCallback())
         .button(text='🔄 Спарсить сейчас', callback_data=ParseNowCallback(mode='menu'))
+        .button(text='Назад в меню', callback_data=MainMenuCallback())
         .adjust(1)
         .as_markup()
     )
@@ -246,7 +257,7 @@ async def accounts_callback(callback: CallbackQuery):
 
     for account in storage.get_accounts():
         inline_keyboard.button(
-            text=f'{account.domain} - {account.username}',
+            text=f'{account.domain.split('.')[0]} - {account.username}',
             callback_data=AccountInfoCallback(account_id=account.id)
         )
 
@@ -254,6 +265,7 @@ async def accounts_callback(callback: CallbackQuery):
         '👤 Кого парсим:',
         reply_markup=inline_keyboard
         .button(text='Назад', callback_data=RegularParsingCallback())
+        .button(text='Назад в меню', callback_data=MainMenuCallback())
         .adjust(1)
         .as_markup()
     )
@@ -335,7 +347,7 @@ async def edit_account_callback(callback: CallbackQuery, callback_data: EditAcco
     )
 
 
-@router.message(UserState.add_account_input, F.text.regexp(r'^\S+\s+\S+$'))
+@router.message(UserState.edit_account_input, F.text.regexp(r'^\S+\s+\S+$'))
 async def account_edit_input(message: Message, state: FSMContext):
     url, mode = message.text.split(maxsplit=2)
     if mode not in PARSING_MODES:
@@ -378,7 +390,17 @@ async def delete_account_callback(callback: CallbackQuery, callback_data: Delete
 
 @router.callback_query(ParseAccountCallback.filter())
 async def account_parse_callback(callback: CallbackQuery, callback_data: ParseAccountCallback):
-    await callback.message.edit_text(f'⚙️ Запуск парсинга аккаунта #{callback_data.account_id}...\n(Пока только имитация!)')
+    account = storage.get_account(callback_data.account_id)
+    if not account:
+        return await callback.message.answer('❌ Аккаунт не найден.')
+
+    await callback.message.edit_text(f'🔄 Парсинг аккаунта {account.username}...')
+
+    try:
+        await parse_account(account)
+        await callback.message.answer(f'✅ Парсинг завершён!\n{account.url}', reply_markup=regular_parsing_keyboard)
+    except Exception as e:
+        await callback.message.answer(f'❌ Ошибка парсинга:\n{str(e)}\n{account.url}', reply_markup=regular_parsing_keyboard, parse_mode=None)
 
 
 @router.callback_query(TogglePauseCallback.filter())
@@ -393,15 +415,36 @@ async def parse_now_callback(callback: CallbackQuery, callback_data: ParseNowCal
         return await callback.message.edit_text(
             'Выберите режим парсинга сейчас:',
             reply_markup=InlineKeyboardBuilder()
-            .button(text='По параметрам', callback_data=ParseNowCallback(mode='params'))
-            .button(text='В таблицу', callback_data=ParseNowCallback(mode='table'))
-            .button(text='На сервер', callback_data=ParseNowCallback(mode='server'))
+            .button(text='Оба', callback_data=ParseNowCallback(mode='оба'))
+            .button(text='В таблицу', callback_data=ParseNowCallback(mode='табл'))
+            .button(text='На сервер', callback_data=ParseNowCallback(mode='серв'))
             .button(text='Назад', callback_data=RegularParsingCallback())
+            .button(text='Назад в меню', callback_data=MainMenuCallback())
             .adjust(1)
             .as_markup()
         )
 
-    await callback.message.edit_text(f'⚙️ Запуск парсинга сейчас в режиме: {callback_data.mode} (пока имитация)')
+    storage_data = storage.load_storage()
+    await callback.message.edit_text(f'🔄 Запускаем парсинг {len(storage_data.accounts)} аккаунтов...')
+
+    success_count = 0
+    fail_count = 0
+
+    async def safe_parse(account):
+        nonlocal success_count, fail_count
+        try:
+            await parse_account(account, mode=callback_data.mode)
+            success_count += 1
+        except Exception:
+            fail_count += 1
+
+    tasks = [safe_parse(account) for account in storage_data.accounts]
+    await asyncio.gather(*tasks)
+
+    await callback.message.answer(
+        f'✅ Парсинг завершён!\nУспешно: {success_count}\nОшибки: {fail_count}',
+        reply_markup=regular_parsing_keyboard
+    )
 
 
 @plugin.setup()
