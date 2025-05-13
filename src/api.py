@@ -2,6 +2,7 @@ import asyncio
 from typing import Optional
 
 from aiohttp import ClientSession
+from bs4 import BeautifulSoup
 
 TENCHAT_BASE_URL = 'https://tenchat.ru/gostinder/api/web/post/user/username'
 TENCHAT_BASE_SIZE = 9
@@ -20,7 +21,20 @@ async def fetch_user_id(domain: str, user_url: str):
             return result['result']['id']
 
 
-async def fetch_user_posts(domain: str, user_id: int, posts_amount: Optional[int] = None, last_post_id: Optional[int] = None):
+async def is_valid_tenchat_user(user_url: str) -> bool:
+    async with ClientSession() as session:
+        async with session.get(user_url) as response:
+            if not response.ok:
+                return True
+
+            html = await response.text()
+            soup = BeautifulSoup(html, 'html.parser')
+
+            blocked_div = soup.find('div', {'data-cy': 'blocked'})
+            return blocked_div is None
+
+
+async def fetch_user_posts(domain: str, user_id: int, posts_amount: Optional[int] = None):
     base_url = f'https://api.{domain}/v2.8/timeline'
     params = {'markdown': 'false', 'sorting': 'new', 'subsitesIds': user_id}
 
@@ -37,11 +51,7 @@ async def fetch_user_posts(domain: str, user_id: int, posts_amount: Optional[int
                     break
 
                 for item in items:
-                    post = item['data']
-                    if last_post_id and post['id'] <= last_post_id:
-                        return posts
-
-                    posts.append(post)
+                    posts.append(item['data'])
                     if posts_amount and len(posts) >= posts_amount:
                         return posts
 
@@ -54,7 +64,7 @@ async def fetch_user_posts(domain: str, user_id: int, posts_amount: Optional[int
     return posts
 
 
-async def fetch_tenchat_posts(username: str, posts_amount: Optional[int] = None, last_post_id: Optional[int] = None):
+async def fetch_tenchat_posts(username: str, posts_amount: Optional[int] = None):
     page = 0
     posts = []
 
@@ -69,12 +79,11 @@ async def fetch_tenchat_posts(username: str, posts_amount: Optional[int] = None,
                     break
 
                 for item in content:
-                    if last_post_id and item['id'] <= last_post_id:
-                        return posts
-
                     posts.append(item)
                     if posts_amount and len(posts) >= posts_amount:
                         return posts
+
+                print(content)
 
                 if len(content) < TENCHAT_BASE_SIZE:
                     break

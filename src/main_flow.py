@@ -10,24 +10,12 @@ from aiohttp import ClientError
 from rewire import simple_plugin
 
 from src import api, bot, utils, storage
-from src.callbacks import LoadModeCallback, CancelParsingCallback, ParseAllCallback, ParseAmountCallback, RegularParsingCallback, ParseNowCallback, TogglePauseCallback, ParseAccountCallback, AccountInfoCallback, AddAccountCallback, AccountsCallback, PeriodicityCallback, EditAccountCallback, DeleteAccountCallback, MainMenuCallback
+from src.callbacks import LoadModeCallback, CancelParsingCallback, ParseAllCallback, ParseAmountCallback, RegularParsingCallback, ParseNowCallback, TogglePauseCallback, ParseAccountCallback, AccountInfoCallback, AddAccountCallback, AccountsCallback, PeriodicityCallback, EditAccountCallback, DeleteAccountCallback, MainMenuCallback, menu_keyboard, regular_parsing_keyboard
 from src.schedules import parse_account
 from src.states import UserState
 
 plugin = simple_plugin()
 router = Router()
-
-menu_keyboard = InlineKeyboardBuilder() \
-    .button(text='Выгрузить данные в JSON', callback_data=LoadModeCallback(mode='json')) \
-    .button(text='Выгрузить данные в Google таблицы', callback_data=LoadModeCallback(mode='google')) \
-    .button(text='Парсинг по расписанию', callback_data=RegularParsingCallback()) \
-    .adjust(1) \
-    .as_markup()
-
-regular_parsing_keyboard = InlineKeyboardBuilder() \
-    .button(text='Назад', callback_data=RegularParsingCallback()) \
-    .button(text='Назад в меню', callback_data=MainMenuCallback()) \
-    .as_markup()
 
 PARSING_MODES = ['табл', 'серв', 'оба']
 
@@ -85,7 +73,7 @@ async def amount_handler(message: Message, state: FSMContext):
     amount = int(message.text) if message.text.isdigit() else 0
 
     if amount <= 0:
-        return await message.answer('⚠️ Неверное количество постов. Попробуйте ещё раз:', reply_markup=ForceReply())
+        return await message.answer('⚠️ Неверное количество постов. Попробуйте ещё раз:')
 
     await state.set_state(UserState.url_select)
     await state.update_data(amount=amount)
@@ -117,12 +105,22 @@ async def cancel_parsing_callback(callback: CallbackQuery, state: FSMContext):
 async def load_json(message: Message, state: FSMContext):
     parsed_args = await utils.parse_url(message.text)
     if not parsed_args:
-        return await message.reply('❌ Ошибка: Неверные аргументы или формат URL. Попробуйте ещё раз:', reply_markup=ForceReply())
+        return await message.reply('❌ Ошибка: Неверные аргументы или формат URL. Попробуйте ещё раз:')
+
+    domain, username, user_id = parsed_args
+    if not domain or not username:
+        return await message.reply(
+            '❌ Ошибка: Пользователя не существует. Попробуйте ещё раз:'
+        )
+
+    if domain == 'tenchat.ru' and not await api.is_valid_tenchat_user(message.text):
+        return await message.reply(
+            '❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:'
+        )
 
     amount = await state.get_value('amount')
     await state.clear()
 
-    domain, username, user_id = parsed_args
     started_message = await message.reply(
         f'⏳ Начат парсинг постов для пользователя {username}...',
         reply_markup=InlineKeyboardBuilder()
@@ -160,12 +158,22 @@ async def load_json(message: Message, state: FSMContext):
 async def load_google(message: Message, state: FSMContext):
     parsed_args = await utils.parse_url(message.text)
     if not parsed_args:
-        return await message.reply('❌ Ошибка: Неверные аргументы или формат URL. Попробуйте ещё раз:', reply_markup=ForceReply())
+        return await message.reply('❌ Ошибка: Неверные аргументы или формат URL. Попробуйте ещё раз:')
+
+    domain, username, user_id = parsed_args
+    if not domain or not username:
+        return await message.reply(
+            '❌ Ошибка: Пользователя не существует. Попробуйте ещё раз:'
+        )
+
+    if domain == 'tenchat.ru' and not await api.is_valid_tenchat_user(message.text):
+        return await message.reply(
+            '❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:'
+        )
 
     amount = await state.get_value('amount')
     await state.clear()
 
-    domain, username, user_id = parsed_args
     started_message = await message.reply(
         f'⏳ Начат парсинг постов для пользователя {username}...',
         reply_markup=InlineKeyboardBuilder()
@@ -220,15 +228,13 @@ async def periodicity_callback(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer(
             'Текущая периодичность: '
             f'\nКаждые {periodicity.interval} дней, в {periodicity.time.strftime('%H:%M')} по Москве.\n'
-            '\nВведите новую периодичность (Пример: 1 21:00):',
-            reply_markup=ForceReply()
+            '\nВведите новую периодичность (Пример: 1 21:00):'
         )
     else:
         await state.set_state(UserState.periodicity_input)
         await callback.message.answer(
             'Периодичность пока не задана.'
-            '\nВведите новую периодичность (Пример: 1 21:00):',
-            reply_markup=ForceReply()
+            '\nВведите новую периодичность (Пример: 1 21:00):'
         )
 
 
@@ -239,7 +245,7 @@ async def periodicity_input(message: Message, state: FSMContext, match: Match[st
 
     parsed_time = utils.parse_time(time_str)
     if not parsed_time:
-        return await message.reply('⚠️ Неверный формат времени. Используйте HH:MM (например: 21:00)', reply_markup=ForceReply())
+        return await message.reply('⚠️ Неверный формат времени. Используйте HH:MM (например: 21:00)')
 
     storage.set_periodicity(
         interval=interval,
@@ -277,8 +283,7 @@ async def add_account_callback(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         'Введите данные аккаунта в формате:\n'
         '<code>ссылка тип_парсинга (табл/серв/оба)</code>\n'
-        'Пример: <code>https://dtf.ru/danny табл</code>',
-        reply_markup=ForceReply()
+        'Пример: <code>https://dtf.ru/danny табл</code>'
     )
 
 
@@ -287,18 +292,26 @@ async def add_account_input(message: Message, state: FSMContext):
     url, mode = message.text.split(maxsplit=2)
     if mode not in PARSING_MODES:
         return await message.reply(
-            '⚠️ Неверный формат. Пример: <code>https://dtf.ru/danny табл</code>',
-            reply_markup=ForceReply()
+            '⚠️ Неверный формат. Пример: <code>https://dtf.ru/danny табл</code>'
         )
 
     parsed_args = await utils.parse_url(url)
     if not parsed_args:
         return await message.reply(
-            '❌ Ошибка: Неверные аргументы или формат URL. Попробуйте ещё раз:',
-            reply_markup=ForceReply()
+            '❌ Ошибка: Неверные аргументы или формат URL. Попробуйте ещё раз:'
         )
 
     domain, username, user_id = parsed_args
+    if not domain or not username:
+        return await message.reply(
+            '❌ Ошибка: Пользователя не существует. Попробуйте ещё раз:'
+        )
+
+    if domain == 'tenchat.ru' and not await api.is_valid_tenchat_user(url):
+        return await message.reply(
+            '❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:'
+        )
+
     storage.add_account(
         url=url,
         mode=mode,
@@ -342,8 +355,7 @@ async def edit_account_callback(callback: CallbackQuery, callback_data: EditAcco
     await callback.message.answer(
         'Введите новые данные в формате:\n'
         '<code>ссылка тип_парсинга (табл/серв/оба)</code>\n'
-        'Пример: <code>https://dtf.ru/danny табл</code>',
-        reply_markup=ForceReply()
+        'Пример: <code>https://dtf.ru/danny табл</code>'
     )
 
 
@@ -352,19 +364,27 @@ async def account_edit_input(message: Message, state: FSMContext):
     url, mode = message.text.split(maxsplit=2)
     if mode not in PARSING_MODES:
         return await message.reply(
-            '⚠️ Неверный формат. Пример: <code>https://dtf.ru/danny табл</code>',
-            reply_markup=ForceReply()
+            '⚠️ Неверный формат. Пример: <code>https://dtf.ru/danny табл</code>'
         )
 
     parsed_args = await utils.parse_url(url)
     if not parsed_args:
         return await message.reply(
-            '❌ Ошибка: Неверные аргументы или формат URL. Попробуйте ещё раз:',
-            reply_markup=ForceReply()
+            '❌ Ошибка: Неверные аргументы или формат URL. Попробуйте ещё раз:'
+        )
+
+    domain, username, user_id = parsed_args
+    if not domain or not username:
+        return await message.reply(
+            '❌ Ошибка: Пользователя не существует. Попробуйте ещё раз:'
+        )
+
+    if domain == 'tenchat.ru' and not await api.is_valid_tenchat_user(url):
+        return await message.reply(
+            '❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:'
         )
 
     account_id = await state.get_value('account_id')
-    domain, username, user_id = parsed_args
     storage.update_account(
         account_id=account_id,
         url=url,
@@ -394,8 +414,10 @@ async def account_parse_callback(callback: CallbackQuery, callback_data: ParseAc
     if not account:
         return await callback.message.answer('❌ Аккаунт не найден.')
 
-    await callback.message.edit_text(f'🔄 Парсинг аккаунта {account.username}...')
+    if account.domain == 'tenchat.ru' and not await api.is_valid_tenchat_user(account.url):
+        return await callback.message.answer('❌ Аккаунт заблокирован.')
 
+    await callback.message.edit_text(f'🔄 Парсинг аккаунта {account.username}...')
     try:
         await parse_account(account)
         await callback.message.answer(f'✅ Парсинг завершён!\n{account.url}', reply_markup=regular_parsing_keyboard)
@@ -415,7 +437,7 @@ async def parse_now_callback(callback: CallbackQuery, callback_data: ParseNowCal
         return await callback.message.edit_text(
             'Выберите режим парсинга сейчас:',
             reply_markup=InlineKeyboardBuilder()
-            .button(text='Оба', callback_data=ParseNowCallback(mode='оба'))
+            .button(text='По параметрам', callback_data=ParseNowCallback(mode=None))
             .button(text='В таблицу', callback_data=ParseNowCallback(mode='табл'))
             .button(text='На сервер', callback_data=ParseNowCallback(mode='серв'))
             .button(text='Назад', callback_data=RegularParsingCallback())
@@ -442,7 +464,7 @@ async def parse_now_callback(callback: CallbackQuery, callback_data: ParseNowCal
     await asyncio.gather(*tasks)
 
     await callback.message.answer(
-        f'✅ Парсинг завершён!\nУспешно: {success_count}\nОшибки: {fail_count}',
+        f'✅ Парсинг завершён. Успешно: {success_count}, Неуспешно: {fail_count}.',
         reply_markup=regular_parsing_keyboard
     )
 

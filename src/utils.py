@@ -21,7 +21,7 @@ def parse_time(text: str):
         return None
 
 
-async def parse_url(args: str) -> Optional[Tuple[str, str, Optional[int]]]:
+async def parse_url(args: str) -> Optional[Tuple[Optional[str], Optional[str], Optional[int]]]:
     parsed = urlparse(args)
     domain = parsed.netloc.lower()
     path = parsed.path.strip('/')
@@ -42,7 +42,7 @@ async def parse_url(args: str) -> Optional[Tuple[str, str, Optional[int]]]:
     if not user_id:
         user_id = await api.fetch_user_id(domain, username)
         if not user_id:
-            return None
+            return None, None, None
 
     return domain, username, int(user_id) if user_id else None
 
@@ -78,10 +78,15 @@ def clean_json_links(data: Any) -> Any:
     return data
 
 
-async def download_posts_files(domain: str, username: str, user_posts: list):
+async def download_posts_files(domain: str, username: str, user_posts: list, last_post_id: Optional[int] = None):
     user_directory = os.path.join(OUTPUT_DIRECTORY, f'{domain.split('.')[0]}-{username}')
+    os.makedirs(user_directory, exist_ok=True)
+
     async with ClientSession() as session:
         for post_data in user_posts:
+            if last_post_id and post_data['id'] <= last_post_id:
+                continue
+
             post_directory = os.path.join(user_directory, str(post_data['id']))
             os.makedirs(post_directory, exist_ok=True)
 

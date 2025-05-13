@@ -1,4 +1,7 @@
+from typing import Optional
+
 from aiogram.filters.callback_data import CallbackData
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
 class LoadModeCallback(CallbackData, prefix='load_mode'):
@@ -26,7 +29,7 @@ class RegularParsingCallback(CallbackData, prefix='regular_parsing'):
 
 
 class ParseNowCallback(CallbackData, prefix='parse_now'):
-    mode: str
+    mode: Optional[str]
 
 
 class PeriodicityCallback(CallbackData, prefix='periodicity'):
@@ -59,3 +62,17 @@ class DeleteAccountCallback(CallbackData, prefix='delete_account'):
 
 class ParseAccountCallback(CallbackData, prefix='parse_account'):
     account_id: int
+
+
+
+menu_keyboard = InlineKeyboardBuilder() \
+    .button(text='Выгрузить данные в JSON', callback_data=LoadModeCallback(mode='json')) \
+    .button(text='Выгрузить данные в Google таблицы', callback_data=LoadModeCallback(mode='google')) \
+    .button(text='Парсинг по расписанию', callback_data=RegularParsingCallback()) \
+    .adjust(1) \
+    .as_markup()
+
+regular_parsing_keyboard = InlineKeyboardBuilder() \
+    .button(text='Назад', callback_data=RegularParsingCallback()) \
+    .button(text='Назад в меню', callback_data=MainMenuCallback()) \
+    .as_markup()

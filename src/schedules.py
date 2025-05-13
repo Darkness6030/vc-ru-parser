@@ -6,13 +6,14 @@ from typing import Optional
 import pytz
 from rewire import simple_plugin
 
-from src import storage, utils, api, sheets
+from src import storage, utils, api, sheets, bot
+from src.callbacks import regular_parsing_keyboard
 from src.storage import Account, Periodicity
 
 plugin = simple_plugin()
 
 MOSCOW_TIMEZONE = pytz.timezone('Europe/Moscow')
-SEMAPHORE = asyncio.Semaphore(5)
+SEMAPHORE = asyncio.Semaphore(1)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,11 +26,15 @@ async def parse_account(account: Account, mode: Optional[str] = None):
     async with SEMAPHORE:
         domain, username, user_id = account.domain, account.username, account.user_id
 
+        if domain == 'tenchat.ru' and not await api.is_valid_tenchat_user(account.url):
+            logging.error(f'Аккаунт {username} заблокирован')
+            raise
+
         try:
             if domain == 'tenchat.ru':
-                user_posts = await api.fetch_tenchat_posts(username, posts_amount=100, last_post_id=account.last_post_id)
+                user_posts = await api.fetch_tenchat_posts(username, posts_amount=100)
             else:
-                user_posts = await api.fetch_user_posts(domain, user_id, posts_amount=100, last_post_id=account.last_post_id)
+                user_posts = await api.fetch_user_posts(domain, user_id, posts_amount=100)
         except Exception as e:
             logging.error(f'Ошибка при получении постов для {username}: {e}')
             raise
@@ -47,7 +52,7 @@ async def parse_account(account: Account, mode: Optional[str] = None):
             mode = mode or account.mode
 
             if mode in ('серв', 'оба'):
-                await utils.download_posts_files(domain, username, user_posts)
+                await utils.download_posts_files(domain, username, user_posts, last_post_id=account.last_post_id)
                 logging.info(f'Файлы {username} сохранены на сервер')
 
             if mode in ('табл', 'оба'):
@@ -94,10 +99,26 @@ async def schedule_runner():
             logging.info('🚀 Начат плановый парсинг аккаунтов...')
             storage.update_last_run()
 
-            tasks = [asyncio.create_task(parse_account(account)) for account in storage_data.accounts]
+            success_count = 0
+            fail_count = 0
+            failed_accounts = []
+
+            async def safe_parse(account):
+                nonlocal success_count, fail_count, failed_accounts
+                try:
+                    await parse_account(account)
+                    success_count += 1
+                except Exception:
+                    fail_count += 1
+                    failed_accounts.append(account)
+
+            tasks = [asyncio.create_task(safe_parse(account)) for account in storage_data.accounts]
             await asyncio.gather(*tasks)
 
-            logging.info(f'✅ Парсинг завершён. Следующий запуск через {periodicity.interval} дней.')
+            logging.info(f'✅ Парсинг завершён. Успешно: {success_count}, Неуспешно: {fail_count}.')
+            await bot.send_to_admins(f'✅ Парсинг завершён. Успешно: {success_count}, Неуспешно: {fail_count}.', reply_markup=regular_parsing_keyboard)
+
+            logging.info(f'⏱ Следующий запуск через {periodicity.interval} дней.')
         except Exception as e:
             logging.exception(f'Ошибка в планировщике: {e}')
             await asyncio.sleep(1)

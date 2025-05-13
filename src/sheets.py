@@ -50,55 +50,42 @@ def sync_update_user_data(title: str, rows: list[dict]):
         value_input_option=ValueInputOption.user_entered
     )
 
-    batch_formats = []
-    batch_formats.append({
+    batch_formats = [{
         'range': 'A1:Z1',
         'format': {
             'textFormat': {'bold': True}
         }
-    })
-
-    batch_formats.append({
+    }, {
         'range': f'E2:E{len(rows) + 1}',
         'format': {
             'numberFormat': {'type': 'DATE', 'pattern': 'd MMM'}
         }
-    })
-
-    batch_formats.append({
+    }, {
         'range': f'G2:G{len(rows) + 1}',
         'format': {
             'numberFormat': {'type': 'DATE', 'pattern': 'd MMM'}
         }
-    })
-
-    batch_formats.append({
+    }, {
         'range': f'D2:D{len(rows) + 1}',
         'format': {
             'numberFormat': {'type': 'NUMBER', 'pattern': '# ##0'}
         }
-    })
-
-    batch_formats.append({
+    }, {
         'range': f'H2:H{len(rows) + 1}',
         'format': {
             'numberFormat': {'type': 'NUMBER', 'pattern': '# ##0'}
         }
-    })
-
-    batch_formats.append({
+    }, {
         'range': f'I2:I{len(rows) + 1}',
         'format': {
             'numberFormat': {'type': 'NUMBER', 'pattern': '# ##0'}
         }
-    })
-
-    batch_formats.append({
+    }, {
         'range': 'A:A',
         'format': {
             'horizontalAlignment': 'LEFT'
         }
-    })
+    }]
 
     retry_with_backoff(worksheet.batch_format, batch_formats)
 
@@ -190,7 +177,7 @@ def sync_update_user_stats_table(users: list[dict]):
                 }
             })
 
-            widths = [59, 51, 68, 52, 55, 50, 53]
+            widths = [57, 51, 68, 52, 55, 50, 53]
             for offset, width in enumerate(widths):
                 col_l = rowcol_to_a1(1, user_col + offset).replace('1', '')
                 retry_with_backoff(set_column_width, worksheet, col_l, width)
@@ -229,7 +216,8 @@ def sync_update_user_stats_table(users: list[dict]):
             })
 
         user_col_vals = retry_with_backoff(worksheet.col_values, user_col)
-        row_idx = len(user_col_vals) + 1
+        data_rows = user_col_vals[2:]
+        row_idx = len(data_rows) + 3
         prev_row = row_idx - 1
         today = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -290,13 +278,13 @@ async def update_user_stats_table(users: list[dict]):
     await asyncio.to_thread(sync_update_user_stats_table, users)
 
 
-def retry_with_backoff(func, *args, attempt=3, **kwargs):
+def retry_with_backoff(func, *args, attempt=5, **kwargs):
     for attempt in range(attempt):
         try:
             return func(*args, **kwargs)
         except Exception as e:
-            wait = 2 ** attempt + random.uniform(0, 1)
+            wait = 4 ** attempt + random.uniform(0, 1)
             print(f'⏳ Ошибка: {e}. Ждём {wait:.1f} сек...')
             time.sleep(wait)
 
-    raise RuntimeError(f'❌ Превышено число попыток вызова {func.__name__}')
+    raise RuntimeError(f'❌ Превышено число попыток вызова {func.__name__}', e)

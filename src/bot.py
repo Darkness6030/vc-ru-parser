@@ -41,5 +41,10 @@ def is_admin(user_id: int) -> bool:
     return user_id in Config.admin_ids
 
 
+async def send_to_admins(text: str, **kwargs):
+    for admin_id in Config.admin_ids:
+        await get_bot().send_message(admin_id, text, **kwargs)
+
+
 def get_bot() -> Bot:
     return DependenciesModule.get().resolve(Bot)
