@@ -4,7 +4,7 @@ from typing import Match
 from aiogram import Dispatcher, Router, F
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, FSInputFile, CallbackQuery, ForceReply, ReplyKeyboardRemove
+from aiogram.types import Message, FSInputFile, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiohttp import ClientError
 from rewire import simple_plugin
@@ -53,8 +53,7 @@ async def load_mode_callback(callback: CallbackQuery, callback_data: LoadModeCal
 async def parse_amount_callback(callback: CallbackQuery, state: FSMContext):
     await state.set_state(UserState.amount_input)
     await callback.message.answer(
-        'Введите количество постов:',
-        reply_markup=ForceReply()
+        'Введите количество постов:'
     )
 
 
@@ -63,8 +62,7 @@ async def parse_all_callback(callback: CallbackQuery, state: FSMContext):
     await state.set_state(UserState.url_select)
     await state.update_data(amount=None)
     await callback.message.answer(
-        'Введите ссылку на пользователя:',
-        reply_markup=ForceReply()
+        'Введите ссылку на пользователя:'
     )
 
 
@@ -78,16 +76,12 @@ async def amount_handler(message: Message, state: FSMContext):
     await state.set_state(UserState.url_select)
     await state.update_data(amount=amount)
     await message.answer(
-        'Введите ссылку на пользователя:',
-        reply_markup=ForceReply()
+        'Введите ссылку на пользователя:'
     )
 
 
 @router.message(UserState.url_select)
 async def url_handler(message: Message, state: FSMContext):
-    loading_message = await message.answer('Загрузка...', reply_markup=ReplyKeyboardRemove())
-    await loading_message.delete()
-
     match await state.get_value('mode'):
         case 'json':
             await load_json(message, state)

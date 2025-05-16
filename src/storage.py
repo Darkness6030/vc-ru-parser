@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel
 
-STORAGE_PATH = 'storage.json'
+STORAGE_PATH = 'storage/storage.json'
 
 
 class Account(BaseModel):

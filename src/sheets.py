@@ -5,6 +5,7 @@ from contextlib import suppress
 from datetime import datetime
 
 import gspread
+import pytz
 from gspread.exceptions import WorksheetNotFound
 from gspread.utils import *
 from gspread_formatting import *
@@ -15,12 +16,31 @@ scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/au
 creds = ServiceAccountCredentials.from_json_keyfile_name('google_credentials.json', scope)
 client = gspread.authorize(creds)
 
-POSTS_SHEET_NAME = 'Статистика'
-REGULAR_SHEET_NAME = 'Регулярный парсинг'
+MAIN_SHEET_NAME = 'Статистика по VC, DTF'
+REGULAR_WORKSHEET_NAME = 'РЕГ.парс'
+MOSCOW_TIMEZONE = pytz.timezone('Europe/Moscow')
+
+COLUMN_WIDTHS = [
+    57, 51, 68, 52, 55, 50, 53
+]
+
+DATE_FORMAT = {
+    'numberFormat': {
+        'type': 'DATE_TIME',
+        'pattern': 'dd.MM.yy HH:mm:ss'
+    }
+}
+
+NUMBER_FORMAT = {
+    'numberFormat': {
+        'type': 'NUMBER',
+        'pattern': '#,##0'
+    }
+}
 
 
 def sync_update_user_data(title: str, rows: list[dict]):
-    spreadsheet = retry_with_backoff(client.open, POSTS_SHEET_NAME)
+    spreadsheet = retry_with_backoff(client.open, MAIN_SHEET_NAME)
     worksheet = None
 
     with suppress(WorksheetNotFound):
@@ -125,8 +145,8 @@ async def update_user_data(title: str, rows: list[dict]):
 
 
 def sync_update_user_stats_table(users: list[dict]):
-    spreadsheet = client.open(REGULAR_SHEET_NAME)
-    worksheet = spreadsheet.get_worksheet(0)
+    spreadsheet = client.open(MAIN_SHEET_NAME)
+    worksheet = spreadsheet.worksheet(REGULAR_WORKSHEET_NAME)
 
     worksheet.freeze(rows=2)
     existing_user_cells = retry_with_backoff(worksheet.row_values, 2)
@@ -151,7 +171,7 @@ def sync_update_user_stats_table(users: list[dict]):
         if name in existing_users:
             user_col = existing_users[name]
         else:
-            user_col = max(existing_users.values(), default=0) + 8
+            user_col = max(existing_users.values()) + 8 if existing_users else 1
             existing_users[name] = user_col
 
             col_letter = rowcol_to_a1(1, user_col).replace('1', '')
@@ -177,8 +197,7 @@ def sync_update_user_stats_table(users: list[dict]):
                 }
             })
 
-            widths = [57, 51, 68, 52, 55, 50, 53]
-            for offset, width in enumerate(widths):
+            for offset, width in enumerate(COLUMN_WIDTHS):
                 col_l = rowcol_to_a1(1, user_col + offset).replace('1', '')
                 retry_with_backoff(set_column_width, worksheet, col_l, width)
 
@@ -189,27 +208,15 @@ def sync_update_user_stats_table(users: list[dict]):
             batch_formats.append({
                 'range': f'{spacer_letter}1:{spacer_letter}',
                 'format': {
-                    'backgroundColor': {
-                        'red': 0.9,
-                        'green': 0.9,
-                        'blue': 0.9
-                    },
+                    'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9},
                     'borders': {
                         'left': {
                             'style': 'SOLID',
-                            'color': {
-                                'red': 0.1,
-                                'green': 0.1,
-                                'blue': 0.1
-                            }
+                            'color': {'red': 0.1, 'green': 0.1, 'blue': 0.1}
                         },
                         'right': {
                             'style': 'SOLID',
-                            'color': {
-                                'red': 0.1,
-                                'green': 0.1,
-                                'blue': 0.1
-                            }
+                            'color': {'red': 0.1, 'green': 0.1, 'blue': 0.1}
                         }
                     }
                 }
@@ -219,7 +226,7 @@ def sync_update_user_stats_table(users: list[dict]):
         data_rows = user_col_vals[2:]
         row_idx = len(data_rows) + 3
         prev_row = row_idx - 1
-        today = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        today = datetime.now(MOSCOW_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
 
         if prev_row < 3:
             diff_posts = '-'
@@ -240,35 +247,21 @@ def sync_update_user_stats_table(users: list[dict]):
             'values': [user_row]
         })
 
-    retry_with_backoff(worksheet.batch_update, batch_updates, value_input_option="USER_ENTERED")
+    retry_with_backoff(worksheet.batch_update, batch_updates, value_input_option='USER_ENTERED')
     last_row = worksheet.row_count
-
-    date_fmt = {
-        'numberFormat': {
-            'type': 'DATE_TIME',
-            'pattern': 'dd.MM.yy HH:mm:ss'
-        }
-    }
-
-    num_fmt = {
-        'numberFormat': {
-            'type': 'NUMBER',
-            'pattern': '#,##0'
-        }
-    }
 
     for user_col in existing_users.values():
         date_col = rowcol_to_a1(1, user_col).replace('1', '')
         batch_formats.append({
             'range': f'{date_col}3:{date_col}{last_row}',
-            'format': date_fmt
+            'format': DATE_FORMAT
         })
 
-        for offset in [1, 2]:
+        for offset in [1, 2, 3, 4, 5, 6]:
             col_l = rowcol_to_a1(1, user_col + offset).replace('1', '')
             batch_formats.append({
                 'range': f'{col_l}3:{col_l}{last_row}',
-                'format': num_fmt
+                'format': NUMBER_FORMAT
             })
 
     retry_with_backoff(worksheet.batch_format, batch_formats)

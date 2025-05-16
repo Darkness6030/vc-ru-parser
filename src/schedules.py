@@ -12,8 +12,8 @@ from src.storage import Account, Periodicity
 
 plugin = simple_plugin()
 
-MOSCOW_TIMEZONE = pytz.timezone('Europe/Moscow')
 SEMAPHORE = asyncio.Semaphore(1)
+MOSCOW_TIMEZONE = pytz.timezone('Europe/Moscow')
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,11 +32,11 @@ async def parse_account(account: Account, mode: Optional[str] = None):
 
         try:
             if domain == 'tenchat.ru':
-                user_posts = await api.fetch_tenchat_posts(username, posts_amount=100)
+                user_posts = await api.fetch_tenchat_posts(username)
             else:
-                user_posts = await api.fetch_user_posts(domain, user_id, posts_amount=100)
+                user_posts = await api.fetch_user_posts(domain, user_id)
         except Exception as e:
-            logging.error(f'Ошибка при получении постов для {username}: {e}')
+            logging.error(f'Ошибка при получении постов для {username}: {e}', exc_info=True)
             raise
 
         logging.info(f'Получены {len(user_posts)} постов для {username}')
@@ -44,25 +44,27 @@ async def parse_account(account: Account, mode: Optional[str] = None):
             return
 
         try:
-            user_data = utils.extract_tenchat_user_data(username, user_posts) \
-                if domain == 'tenchat.ru' else \
-                utils.extract_user_data(domain, username, user_posts)
-
-            await sheets.update_user_stats_table([user_data])
             mode = mode or account.mode
-
             if mode in ('серв', 'оба'):
                 await utils.download_posts_files(domain, username, user_posts, last_post_id=account.last_post_id)
+
+                last_post_id = user_posts[0]['id']
+                storage.update_account(account.id, last_post_id=last_post_id)
+
                 logging.info(f'Файлы {username} сохранены на сервер')
 
             if mode in ('табл', 'оба'):
-                await utils.unload_posts_to_sheets(domain, username, user_posts)
-                logging.info(f'Посты {username} выгружены в Google таблицу')
+                user_data = utils.extract_tenchat_user_data(username, user_posts) \
+                    if domain == 'tenchat.ru' else \
+                    utils.extract_user_data(domain, username, user_posts)
 
-            last_post_id = user_posts[0]['id']
-            storage.update_account(account.id, last_post_id=last_post_id)
+                await sheets.update_user_stats_table([user_data])
+                await utils.unload_posts_to_sheets(domain, username, user_posts)
+
+                logging.info(f'Данные {username} выгружены в Google таблицу')
+
         except Exception as e:
-            logging.error(f'Ошибка при обработке данных для {username}: {e}')
+            logging.error(f'Ошибка при обработке данных для {username}: {e}', exc_info=True)
             raise
 
 
@@ -120,7 +122,7 @@ async def schedule_runner():
 
             logging.info(f'⏱ Следующий запуск через {periodicity.interval} дней.')
         except Exception as e:
-            logging.exception(f'Ошибка в планировщике: {e}')
+            logging.exception(f'Ошибка в планировщике: {e}', exc_info=True)
             await asyncio.sleep(1)
 
 

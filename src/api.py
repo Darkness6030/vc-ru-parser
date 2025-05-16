@@ -83,8 +83,6 @@ async def fetch_tenchat_posts(username: str, posts_amount: Optional[int] = None)
                     if posts_amount and len(posts) >= posts_amount:
                         return posts
 
-                print(content)
-
                 if len(content) < TENCHAT_BASE_SIZE:
                     break
 
