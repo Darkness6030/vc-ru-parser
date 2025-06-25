@@ -103,14 +103,15 @@ async def load_json(message: Message, state: FSMContext):
 
     domain, username, user_id = parsed_args
     if not domain or not username:
-        return await message.reply(
-            '❌ Ошибка: Пользователя не существует. Попробуйте ещё раз:'
-        )
+        return await message.reply('❌ Ошибка: Пользователя не существует. Попробуйте ещё раз:')
 
-    if domain == 'tenchat.ru' and not await api.is_valid_tenchat_user(message.text):
-        return await message.reply(
-            '❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:'
-        )
+    if domain == 'tenchat.ru':
+        if not await api.is_valid_tenchat_user(message.text):
+            return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
+    else:
+        user_data = await api.fetch_user_data(domain, id=user_id)
+        if user_data['name'] == 'Аккаунт удален':
+            return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
 
     amount = await state.get_value('amount')
     await state.clear()
@@ -156,14 +157,15 @@ async def load_google(message: Message, state: FSMContext):
 
     domain, username, user_id = parsed_args
     if not domain or not username:
-        return await message.reply(
-            '❌ Ошибка: Пользователя не существует. Попробуйте ещё раз:'
-        )
+        return await message.reply('❌ Ошибка: Пользователя не существует. Попробуйте ещё раз:')
 
-    if domain == 'tenchat.ru' and not await api.is_valid_tenchat_user(message.text):
-        return await message.reply(
-            '❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:'
-        )
+    if domain == 'tenchat.ru':
+        if not await api.is_valid_tenchat_user(message.text):
+            return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
+    else:
+        user_data = await api.fetch_user_data(domain, id=user_id)
+        if user_data['name'] == 'Аккаунт удален':
+            return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
 
     amount = await state.get_value('amount')
     await state.clear()
@@ -208,8 +210,8 @@ async def regular_parsing_callback(callback: CallbackQuery):
         .button(text='⏰ Периодичность', callback_data=PeriodicityCallback())
         .button(text=pause_status, callback_data=TogglePauseCallback())
         .button(text='🔄 Спарсить сейчас', callback_data=ParseNowCallback(mode='menu'))
-        .button(text='Назад в меню', callback_data=MainMenuCallback())
-        .button(text='Удалить невалид', callback_data=DeleteInvalidCallback())
+        .button(text='❌ Удалить невалид', callback_data=DeleteInvalidCallback())
+        .button(text='< Назад в меню', callback_data=MainMenuCallback())
         .adjust(1)
         .as_markup()
     )
@@ -302,10 +304,10 @@ async def add_account_input(message: Message, state: FSMContext):
             '❌ Ошибка: Пользователя не существует. Попробуйте ещё раз:'
         )
 
-    if domain == 'tenchat.ru' and not await api.is_valid_tenchat_user(url):
-        return await message.reply(
-            '❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:'
-        )
+    # if domain == 'tenchat.ru' and not await api.is_valid_tenchat_user(url):
+    #     return await message.reply(
+    #         '❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:'
+    #     )
 
     storage.add_account(
         url=url,
@@ -370,14 +372,15 @@ async def account_edit_input(message: Message, state: FSMContext):
 
     domain, username, user_id = parsed_args
     if not domain or not username:
-        return await message.reply(
-            '❌ Ошибка: Пользователя не существует. Попробуйте ещё раз:'
-        )
+        return await message.reply('❌ Ошибка: Пользователя не существует. Попробуйте ещё раз:')
 
-    if domain == 'tenchat.ru' and not await api.is_valid_tenchat_user(url):
-        return await message.reply(
-            '❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:'
-        )
+    if domain == 'tenchat.ru':
+        if not await api.is_valid_tenchat_user(url):
+            return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
+    else:
+        user_data = await api.fetch_user_data(domain, id=user_id)
+        if user_data['name'] == 'Аккаунт удален':
+            return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
 
     account_id = await state.get_value('account_id')
     storage.update_account(
@@ -409,8 +412,13 @@ async def account_parse_callback(callback: CallbackQuery, callback_data: ParseAc
     if not account:
         return await callback.message.answer('❌ Аккаунт не найден.')
 
-    if account.domain == 'tenchat.ru' and not await api.is_valid_tenchat_user(account.url):
-        return await callback.message.answer('❌ Аккаунт заблокирован.')
+    if account.domain == 'tenchat.ru':
+        if not await api.is_valid_tenchat_user(account.url):
+            return await callback.message.answer('❌ Аккаунт заблокирован.')
+    else:
+        user_data = await api.fetch_user_data(account.domain, id=account.user_id)
+        if user_data['name'] == 'Аккаунт удален':
+            return await callback.message.answer('❌ Аккаунт заблокирован.')
 
     await callback.message.edit_text(f'🔄 Парсинг аккаунта {account.username}...')
     try:
@@ -474,9 +482,9 @@ async def parse_now_callback(callback: CallbackQuery, callback_data: ParseNowCal
     if failed_accounts:
         result_lines.append('\n❗️Не удалось спарсить следующие аккаунты:')
         for index, account in enumerate(failed_accounts, start=1):
-            result_lines.append(f'{account.url} ({account.username})')
+            result_lines.append(f'{account.url} ({account.name or account.username})')
 
-        inline_keyboard.button(text='Удалить невалид', callback_data=DeleteInvalidCallback())
+        inline_keyboard.button(text='❌ Удалить невалид', callback_data=DeleteInvalidCallback())
         storage.set_last_failed_accounts(failed_accounts)
 
     await callback.message.answer(
@@ -493,7 +501,7 @@ async def delete_invalid_callback(callback: CallbackQuery):
 
     accounts_message = 'Не удалось спарсить следующие аккаунты:\n\n'
     for index, account in enumerate(last_failed_accounts, start=1):
-        accounts_message += f'{account.url} ({account.username})\n'
+        accounts_message += f'{account.url} ({account.name or account.username})\n'
 
     accounts_message += '\nУдалить эти аккаунты?'
     await callback.message.edit_text(

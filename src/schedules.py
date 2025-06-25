@@ -27,11 +27,21 @@ async def parse_account(account: Account, mode: Optional[str] = None):
     async with SEMAPHORE:
         domain, username, user_id = account.domain, account.username, account.user_id
 
+        if domain == 'tenchat.ru':
+            account.name = await api.fetch_tenchat_user_name(account.url)
+            storage.update_account(account.id, name=account.name)
 
-
-        if domain == 'tenchat.ru' and not await api.is_valid_tenchat_user(account.url):
-            logging.error(f'Аккаунт {username} заблокирован')
-            raise
+            if not await api.is_valid_tenchat_user(account.url):
+                logging.error(f'Аккаунт {username} заблокирован')
+                raise
+        else:
+            user_data = await api.fetch_user_data(account.domain, id=account.user_id)
+            if user_data['name'] != 'Аккаунт удален':
+                account.name = user_data['name']
+                storage.update_account(account.id, name=account.name)
+            else:
+                logging.error(f'Аккаунт {username} заблокирован')
+                raise
 
         try:
             if domain == 'tenchat.ru':
@@ -134,17 +144,14 @@ async def schedule_runner():
             if failed_accounts:
                 result_lines.append('\n❗️Не удалось спарсить следующие аккаунты:')
                 for index, account in enumerate(failed_accounts, start=1):
-                    result_lines.append(f'{account.url} ({account.username})')
+                    result_lines.append(f'{account.url} ({account.name or account.username})')
 
-                inline_keyboard.button(text='Удалить невалид', callback_data=DeleteInvalidCallback())
+                inline_keyboard.button(text='❌ Удалить невалид', callback_data=DeleteInvalidCallback())
                 storage.set_last_failed_accounts(failed_accounts)
 
             await bot.send_to_admins(
                 '\n'.join(result_lines),
-                reply_markup=InlineKeyboardBuilder()
-                .button(text='Назад', callback_data=RegularParsingCallback())
-                .button(text='Назад в меню', callback_data=MainMenuCallback())
-                .as_markup()
+                reply_markup=inline_keyboard.adjust(2).as_markup()
             )
 
             logging.info(f'✅ Парсинг завершён. Успешно: {success_count}, Неуспешно: {failed_count}.')

@@ -40,9 +40,11 @@ async def parse_url(args: str) -> Optional[Tuple[Optional[str], Optional[str], O
     username = match.group(4) or match.group(5) or f'id{user_id}'
 
     if not user_id:
-        user_id = await api.fetch_user_id(domain, username)
-        if not user_id:
+        user_data = await api.fetch_user_data(domain, uri=username)
+        if not user_data:
             return None, None, None
+
+        user_id = user_data['id']
 
     return domain, username, int(user_id) if user_id else None
 

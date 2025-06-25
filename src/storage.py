@@ -13,6 +13,7 @@ class Account(BaseModel):
     mode: str
     domain: str
     username: str
+    name: Optional[str] = None
     user_id: Optional[int] = None
     last_post_id: Optional[int] = None
 
