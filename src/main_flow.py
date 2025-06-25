@@ -10,7 +10,7 @@ from aiohttp import ClientError
 from rewire import simple_plugin
 
 from src import api, bot, utils, storage
-from src.callbacks import LoadModeCallback, CancelParsingCallback, ParseAllCallback, ParseAmountCallback, RegularParsingCallback, ParseNowCallback, TogglePauseCallback, ParseAccountCallback, AccountInfoCallback, AddAccountCallback, AccountsCallback, PeriodicityCallback, EditAccountCallback, DeleteAccountCallback, MainMenuCallback, menu_keyboard, regular_parsing_keyboard
+from src.callbacks import LoadModeCallback, CancelParsingCallback, ParseAllCallback, ParseAmountCallback, RegularParsingCallback, ParseNowCallback, TogglePauseCallback, ParseAccountCallback, AccountInfoCallback, AddAccountCallback, AccountsCallback, PeriodicityCallback, EditAccountCallback, DeleteAccountCallback, MainMenuCallback, menu_keyboard, regular_parsing_keyboard, DeleteInvalidCallback, DeleteInvalidConfirmCallback
 from src.schedules import parse_account
 from src.states import UserState
 
@@ -209,6 +209,7 @@ async def regular_parsing_callback(callback: CallbackQuery):
         .button(text=pause_status, callback_data=TogglePauseCallback())
         .button(text='🔄 Спарсить сейчас', callback_data=ParseNowCallback(mode='menu'))
         .button(text='Назад в меню', callback_data=MainMenuCallback())
+        .button(text='Удалить невалид', callback_data=DeleteInvalidCallback())
         .adjust(1)
         .as_markup()
     )
@@ -444,23 +445,77 @@ async def parse_now_callback(callback: CallbackQuery, callback_data: ParseNowCal
     await callback.message.edit_text(f'🔄 Запускаем парсинг {len(storage_data.accounts)} аккаунтов...')
 
     success_count = 0
-    fail_count = 0
+    failed_count = 0
+    failed_accounts = []
 
     async def safe_parse(account):
-        nonlocal success_count, fail_count
+        nonlocal success_count, failed_count
         try:
             await parse_account(account, mode=callback_data.mode)
             success_count += 1
         except Exception:
-            fail_count += 1
+            failed_count += 1
+            failed_accounts.append(account)
 
     tasks = [safe_parse(account) for account in storage_data.accounts]
     await asyncio.gather(*tasks)
 
+    result_lines = [
+        f'✅ Парсинг завершён.',
+        f'Всего аккаунтов: {len(storage_data.accounts)}',
+        f'Успешно: {success_count}',
+        f'Неуспешно: {failed_count}'
+    ]
+
+    inline_keyboard = InlineKeyboardBuilder() \
+        .button(text='Назад', callback_data=RegularParsingCallback()) \
+        .button(text='Назад в меню', callback_data=MainMenuCallback())
+
+    if failed_accounts:
+        result_lines.append('\n❗️Не удалось спарсить следующие аккаунты:')
+        for index, account in enumerate(failed_accounts, start=1):
+            result_lines.append(f'{account.url} ({account.username})')
+
+        inline_keyboard.button(text='Удалить невалид', callback_data=DeleteInvalidCallback())
+        storage.set_last_failed_accounts(failed_accounts)
+
     await callback.message.answer(
-        f'✅ Парсинг завершён. Успешно: {success_count}, Неуспешно: {fail_count}.',
-        reply_markup=regular_parsing_keyboard
+        '\n'.join(result_lines),
+        reply_markup=inline_keyboard.adjust(2).as_markup()
     )
+
+
+@router.callback_query(DeleteInvalidCallback.filter())
+async def delete_invalid_callback(callback: CallbackQuery):
+    last_failed_accounts = storage.get_last_failed_accounts()
+    if not last_failed_accounts:
+        return await callback.answer('Нет аккаунтов для удаления.')
+
+    accounts_message = 'Не удалось спарсить следующие аккаунты:\n\n'
+    for index, account in enumerate(last_failed_accounts, start=1):
+        accounts_message += f'{account.url} ({account.username})\n'
+
+    accounts_message += '\nУдалить эти аккаунты?'
+    await callback.message.edit_text(
+        accounts_message,
+        reply_markup=InlineKeyboardBuilder()
+        .button(text='Да', callback_data=DeleteInvalidConfirmCallback(confirm=True))
+        .button(text='Нет', callback_data=DeleteInvalidConfirmCallback(confirm=False))
+        .as_markup()
+    )
+
+
+@router.callback_query(DeleteInvalidConfirmCallback.filter())
+async def delete_invalid_confirm_callback(callback: CallbackQuery, callback_data: DeleteInvalidConfirmCallback):
+    if not callback_data.confirm:
+        return await callback.message.edit_text('❌ Ок, отменяем.', reply_markup=regular_parsing_keyboard)
+
+    last_failed_accounts = storage.get_last_failed_accounts()
+    for account in last_failed_accounts:
+        storage.delete_account(account.id)
+
+    storage.set_last_failed_accounts([])
+    await callback.message.edit_text(f'✅ Удалено {len(last_failed_accounts)} аккаунтов.', reply_markup=regular_parsing_keyboard)
 
 
 @plugin.setup()

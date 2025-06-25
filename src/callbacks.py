@@ -64,6 +64,13 @@ class ParseAccountCallback(CallbackData, prefix='parse_account'):
     account_id: int
 
 
+class DeleteInvalidCallback(CallbackData, prefix='delete_invalid'):
+    pass
+
+
+class DeleteInvalidConfirmCallback(CallbackData, prefix='delete_invalid_confirm'):
+    confirm: bool
+
 
 menu_keyboard = InlineKeyboardBuilder() \
     .button(text='Выгрузить данные в JSON', callback_data=LoadModeCallback(mode='json')) \

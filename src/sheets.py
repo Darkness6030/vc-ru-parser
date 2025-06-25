@@ -51,7 +51,7 @@ def sync_update_user_data(title: str, rows: list[dict]):
         worksheet = spreadsheet.add_worksheet(title=title, rows=100, cols=20)
         worksheet.freeze(rows=1)
 
-    headers = list(rows[0].keys()) + ['Дней с публикации', 'Просмотров/день']
+    headers = list(rows[0].keys()) + ['Дней с публикации', 'Просмотров/день', 'Ч и м', 'Мин']
     retry_with_backoff(worksheet.update, [headers], 'A1')
 
     values_to_insert = []
@@ -59,7 +59,9 @@ def sync_update_user_data(title: str, rows: list[dict]):
         values = list(row.values())
         values.extend([
             f'=DATEDIF(E{i};G{i};"d")',
-            f'=IF(H{i}=0;D{i}/1;ROUND(D{i}/H{i}))'
+            f'=IF(H{i}=0;D{i}/1;ROUND(D{i}/H{i}))',
+            f'=IF(AND(E{i}<>""; E{i + 1}<>""); INT(ABS(E{i + 1}-E{i})*24) & " ч " & ROUND(MOD(ABS(E{i + 1}-E{i})*24;1)*60;0) & " м"; "")',
+            f'=IF(AND(E{i}<>""; E{i + 1}<>""); ROUND(ABS(E{i + 1}-E{i})*24*60; 0); "")'
         ])
         values_to_insert.append(values)
 
@@ -130,14 +132,26 @@ def sync_update_user_data(title: str, rows: list[dict]):
         )
     )
 
+    rule_min = ConditionalFormatRule(
+        ranges=[GridRange.from_a1_range(f'K2:K{len(rows) + 1}', worksheet)],
+        gradientRule=GradientRule(
+            minpoint=InterpolationPoint(type='MIN', color=Color(0.345, 0.737, 0.549)),
+            midpoint=InterpolationPoint(type='PERCENTILE', value='50', color=Color(1.0, 0.831, 0.392)),
+            maxpoint=InterpolationPoint(type='MAX', color=Color(0.910, 0.486, 0.455))
+        )
+    )
+
     rules.append(rule_days)
     rules.append(rule_views)
+    rules.append(rule_min)
     retry_with_backoff(rules.save)
 
     max_length = max(len(str(val)) for val in retry_with_backoff(worksheet.col_values, 1))
     retry_with_backoff(set_column_width, worksheet, 'A', max_length * 9)
     retry_with_backoff(set_column_width, worksheet, 'B', 100)
     retry_with_backoff(set_column_width, worksheet, 'C', 400)
+    retry_with_backoff(set_column_width, worksheet, 'J', 71)
+    retry_with_backoff(set_column_width, worksheet, 'K', 44)
 
 
 async def update_user_data(title: str, rows: list[dict]):
@@ -149,13 +163,13 @@ def sync_update_user_stats_table(users: list[dict]):
     worksheet = spreadsheet.worksheet(REGULAR_WORKSHEET_NAME)
 
     worksheet.freeze(rows=2)
-    existing_user_cells = retry_with_backoff(worksheet.row_values, 2)
+    existing_user_cells = retry_with_backoff(worksheet.row_values, 1)
     existing_users = {}
 
     for col in range(1, len(existing_user_cells) + 1, 8):
-        name = existing_user_cells[col - 1]
-        if name:
-            existing_users[name] = col
+        url = existing_user_cells[col - 1]
+        if url:
+            existing_users[url] = col
 
     batch_updates = []
     batch_formats = []
@@ -168,11 +182,11 @@ def sync_update_user_stats_table(users: list[dict]):
         total_posts = user['total_posts']
         total_views = user['total_views']
 
-        if name in existing_users:
-            user_col = existing_users[name]
+        if url in existing_users:
+            user_col = existing_users[url]
         else:
             user_col = max(existing_users.values()) + 8 if existing_users else 1
-            existing_users[name] = user_col
+            existing_users[url] = user_col
 
             col_letter = rowcol_to_a1(1, user_col).replace('1', '')
             retry_with_backoff(worksheet.add_cols, 7)

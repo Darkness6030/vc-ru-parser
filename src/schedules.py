@@ -4,10 +4,11 @@ from datetime import datetime
 from typing import Optional
 
 import pytz
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from rewire import simple_plugin
 
 from src import storage, utils, api, sheets, bot
-from src.callbacks import regular_parsing_keyboard
+from src.callbacks import RegularParsingCallback, MainMenuCallback, DeleteInvalidCallback
 from src.storage import Account, Periodicity
 
 plugin = simple_plugin()
@@ -25,6 +26,8 @@ logging.basicConfig(
 async def parse_account(account: Account, mode: Optional[str] = None):
     async with SEMAPHORE:
         domain, username, user_id = account.domain, account.username, account.user_id
+
+
 
         if domain == 'tenchat.ru' and not await api.is_valid_tenchat_user(account.url):
             logging.error(f'Аккаунт {username} заблокирован')
@@ -98,29 +101,54 @@ async def schedule_runner():
                 await asyncio.sleep(1)
                 continue
 
-            logging.info('🚀 Начат плановый парсинг аккаунтов...')
+            logging.info(f'🚀 Начат плановый парсинг {len(storage_data.accounts)} аккаунтов...')
             storage.update_last_run()
 
             success_count = 0
-            fail_count = 0
+            failed_count = 0
             failed_accounts = []
 
             async def safe_parse(account):
-                nonlocal success_count, fail_count, failed_accounts
+                nonlocal success_count, failed_count
                 try:
                     await parse_account(account)
                     success_count += 1
                 except Exception:
-                    fail_count += 1
+                    failed_count += 1
                     failed_accounts.append(account)
 
-            tasks = [asyncio.create_task(safe_parse(account)) for account in storage_data.accounts]
+            tasks = [safe_parse(account) for account in storage_data.accounts]
             await asyncio.gather(*tasks)
 
-            logging.info(f'✅ Парсинг завершён. Успешно: {success_count}, Неуспешно: {fail_count}.')
-            await bot.send_to_admins(f'✅ Парсинг завершён. Успешно: {success_count}, Неуспешно: {fail_count}.', reply_markup=regular_parsing_keyboard)
+            result_lines = [
+                f'✅ Парсинг завершён.',
+                f'Всего аккаунтов: {len(storage_data.accounts)}',
+                f'Успешно: {success_count}',
+                f'Неуспешно: {failed_count}'
+            ]
 
-            logging.info(f'⏱ Следующий запуск через {periodicity.interval} дней.')
+            inline_keyboard = InlineKeyboardBuilder() \
+                .button(text='Назад', callback_data=RegularParsingCallback()) \
+                .button(text='Назад в меню', callback_data=MainMenuCallback())
+
+            if failed_accounts:
+                result_lines.append('\n❗️Не удалось спарсить следующие аккаунты:')
+                for index, account in enumerate(failed_accounts, start=1):
+                    result_lines.append(f'{account.url} ({account.username})')
+
+                inline_keyboard.button(text='Удалить невалид', callback_data=DeleteInvalidCallback())
+                storage.set_last_failed_accounts(failed_accounts)
+
+            await bot.send_to_admins(
+                '\n'.join(result_lines),
+                reply_markup=InlineKeyboardBuilder()
+                .button(text='Назад', callback_data=RegularParsingCallback())
+                .button(text='Назад в меню', callback_data=MainMenuCallback())
+                .as_markup()
+            )
+
+            logging.info(f'✅ Парсинг завершён. Успешно: {success_count}, Неуспешно: {failed_count}.')
+            logging.info(f'⏳ Следующий запуск через {periodicity.interval} дней.')
         except Exception as e:
             logging.exception(f'Ошибка в планировщике: {e}', exc_info=True)
             await asyncio.sleep(1)

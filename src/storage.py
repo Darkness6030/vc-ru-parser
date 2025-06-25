@@ -25,6 +25,7 @@ class Periodicity(BaseModel):
 
 class StorageData(BaseModel):
     accounts: List[Account] = []
+    last_failed_accounts: List[Account] = []
     periodicity: Optional[Periodicity] = None
     paused: bool = False
 
@@ -69,6 +70,16 @@ def update_account(account_id: int, **kwargs):
 def delete_account(account_id: int):
     data = load_storage()
     data.accounts = [account for account in data.accounts if account.id != account_id]
+    save_storage(data)
+
+
+def get_last_failed_accounts() -> List[Account]:
+    return load_storage().last_failed_accounts
+
+
+def set_last_failed_accounts(last_failed_accounts: List[Account]):
+    data = load_storage()
+    data.last_failed_accounts = last_failed_accounts
     save_storage(data)
 
 
