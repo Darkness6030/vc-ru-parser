@@ -110,7 +110,7 @@ async def load_json(message: Message, state: FSMContext):
             return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
     else:
         user_data = await api.fetch_user_data(domain, id=user_id)
-        if user_data['name'] == 'Аккаунт удален':
+        if user_data['name'] in ('Аккаунт удален', 'Удаленный аккаунт'):
             return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
 
     amount = await state.get_value('amount')
@@ -164,7 +164,7 @@ async def load_google(message: Message, state: FSMContext):
             return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
     else:
         user_data = await api.fetch_user_data(domain, id=user_id)
-        if user_data['name'] == 'Аккаунт удален':
+        if user_data['name'] in ('Аккаунт удален', 'Удаленный аккаунт'):
             return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
 
     amount = await state.get_value('amount')
@@ -300,14 +300,19 @@ async def add_account_input(message: Message, state: FSMContext):
 
     domain, username, user_id = parsed_args
     if not domain or not username:
-        return await message.reply(
-            '❌ Ошибка: Пользователя не существует. Попробуйте ещё раз:'
-        )
+        return await message.reply('❌ Ошибка: Пользователя не существует. Попробуйте ещё раз:')
 
-    # if domain == 'tenchat.ru' and not await api.is_valid_tenchat_user(url):
-    #     return await message.reply(
-    #         '❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:'
-    #     )
+    if domain == 'tenchat.ru':
+        if not await api.is_valid_tenchat_user(url):
+            return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
+    else:
+        user_data = await api.fetch_user_data(domain, id=user_id)
+        if user_data['name'] in ('Аккаунт удален', 'Удаленный аккаунт'):
+            return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
+
+    for account in storage.get_accounts():
+        if account.url == url:
+            return await message.reply('❌ Ошибка: Этот аккаунт уже добавлен. Попробуйте ещё раз:')
 
     storage.add_account(
         url=url,
@@ -379,7 +384,7 @@ async def account_edit_input(message: Message, state: FSMContext):
             return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
     else:
         user_data = await api.fetch_user_data(domain, id=user_id)
-        if user_data['name'] == 'Аккаунт удален':
+        if user_data['name'] in ('Аккаунт удален', 'Удаленный аккаунт'):
             return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
 
     account_id = await state.get_value('account_id')
@@ -417,7 +422,7 @@ async def account_parse_callback(callback: CallbackQuery, callback_data: ParseAc
             return await callback.message.answer('❌ Аккаунт заблокирован.')
     else:
         user_data = await api.fetch_user_data(account.domain, id=account.user_id)
-        if user_data['name'] == 'Аккаунт удален':
+        if user_data['name'] in ('Аккаунт удален', 'Удаленный аккаунт'):
             return await callback.message.answer('❌ Аккаунт заблокирован.')
 
     await callback.message.edit_text(f'🔄 Парсинг аккаунта {account.username}...')

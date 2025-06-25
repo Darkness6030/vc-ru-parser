@@ -36,7 +36,7 @@ async def parse_account(account: Account, mode: Optional[str] = None):
                 raise
         else:
             user_data = await api.fetch_user_data(account.domain, id=account.user_id)
-            if user_data['name'] != 'Аккаунт удален':
+            if user_data['name'] not in ('Аккаунт удален', 'Удаленный аккаунт'):
                 account.name = user_data['name']
                 storage.update_account(account.id, name=account.name)
             else:
