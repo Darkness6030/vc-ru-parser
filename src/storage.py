@@ -1,4 +1,4 @@
-import os.path
+import os
 from datetime import datetime, time
 from typing import List, Optional
 
@@ -16,19 +16,47 @@ class Account(BaseModel):
     name: Optional[str] = None
     user_id: Optional[int] = None
     last_post_id: Optional[int] = None
+    last_url: Optional[str] = None
+    is_blocked: bool = False
 
 
 class Periodicity(BaseModel):
     interval: int
     time: time
+
+
+class RegularParsingSettings(BaseModel):
+    enabled: bool = False
+    periodicity: Optional[Periodicity] = None
+    last_run: Optional[datetime] = None
+
+
+class MonitorAccountsSettings(BaseModel):
+    enabled: bool = False
+    periodicity: int = 0
+    url_change_enabled: bool = False
+    blocking_enabled: bool = False
+    dtf_enabled: bool = False
+    vc_enabled: bool = False
+    tenchat_enabled: bool = False
+    last_run: Optional[datetime] = None
+
+
+class MonitorPostsSettings(BaseModel):
+    enabled: bool = False
+    periodicity: List[time] = []
+    dtf_enabled: bool = False
+    vc_enabled: bool = False
+    tenchat_enabled: bool = False
     last_run: Optional[datetime] = None
 
 
 class StorageData(BaseModel):
     accounts: List[Account] = []
     last_failed_accounts: List[Account] = []
-    periodicity: Optional[Periodicity] = None
-    paused: bool = False
+    regular_parsing: RegularParsingSettings = RegularParsingSettings()
+    monitor_accounts: MonitorAccountsSettings = MonitorAccountsSettings()
+    monitor_posts: MonitorPostsSettings = MonitorPostsSettings()
 
 
 def load_storage() -> StorageData:
@@ -49,29 +77,32 @@ def get_accounts() -> List[Account]:
 
 
 def get_account(account_id: int) -> Optional[Account]:
-    for account in get_accounts():
-        if account.id == account_id:
-            return account
+    return next((account for account in get_accounts() if account.id == account_id), None)
 
 
 def add_account(**kwargs):
-    data = load_storage()
-    data.accounts.append(Account(id=get_next_account_id(data.accounts), **kwargs))
-    save_storage(data)
+    storage_data = load_storage()
+    storage_data.accounts.append(Account(id=get_next_account_id(storage_data.accounts), **kwargs))
+    save_storage(storage_data)
 
 
 def update_account(account_id: int, **kwargs):
-    data = load_storage()
-    for account in data.accounts:
+    storage_data = load_storage()
+    for account in storage_data.accounts:
         if account.id == account_id:
             account.__dict__.update(**kwargs)
-            save_storage(data)
+            break
+    save_storage(storage_data)
 
 
 def delete_account(account_id: int):
-    data = load_storage()
-    data.accounts = [account for account in data.accounts if account.id != account_id]
-    save_storage(data)
+    storage_data = load_storage()
+    storage_data.accounts = [account for account in storage_data.accounts if account.id != account_id]
+    save_storage(storage_data)
+
+
+def get_next_account_id(accounts: List[Account]) -> int:
+    return max((account.id for account in accounts), default=0) + 1
 
 
 def get_last_failed_accounts() -> List[Account]:
@@ -79,41 +110,79 @@ def get_last_failed_accounts() -> List[Account]:
 
 
 def set_last_failed_accounts(last_failed_accounts: List[Account]):
-    data = load_storage()
-    data.last_failed_accounts = last_failed_accounts
-    save_storage(data)
+    storage_data = load_storage()
+    storage_data.last_failed_accounts = last_failed_accounts
+    save_storage(storage_data)
 
 
-def get_periodicity() -> Optional[Periodicity]:
-    return load_storage().periodicity
+def get_regular_parsing_settings() -> RegularParsingSettings:
+    return load_storage().regular_parsing
 
 
-def set_periodicity(interval: int, time: str):
-    data = load_storage()
-    data.periodicity = Periodicity(interval=interval, time=time)
-    save_storage(data)
+def toggle_regular_parsing() -> bool:
+    storage_data = load_storage()
+    storage_data.regular_parsing.enabled = not storage_data.regular_parsing.enabled
+    save_storage(storage_data)
+    return storage_data.regular_parsing.enabled
 
 
-def update_last_run():
-    data = load_storage()
-    if data.periodicity:
-        data.periodicity.last_run = datetime.now()
-        save_storage(data)
+def get_regular_parsing_periodicity() -> Optional[Periodicity]:
+    return load_storage().regular_parsing.periodicity
 
 
-def is_paused() -> bool:
-    return load_storage().paused
+def set_regular_parsing_periodicity(interval: int, time: time):
+    storage_data = load_storage()
+    storage_data.regular_parsing.periodicity = Periodicity(interval=interval, time=time)
+    save_storage(storage_data)
 
 
-def toggle_pause() -> bool:
-    data = load_storage()
-    data.paused = not data.paused
-    save_storage(data)
-    return data.paused
+def update_regular_parsing_last_run():
+    storage_data = load_storage()
+    storage_data.regular_parsing.last_run = datetime.now()
+    save_storage(storage_data)
 
 
-def get_next_account_id(accounts: List[Account]) -> int:
-    if not accounts:
-        return 0
+def set_monitor_accounts_settings(settings: MonitorAccountsSettings):
+    storage_data = load_storage()
+    storage_data.monitor_accounts = settings
+    save_storage(storage_data)
 
-    return max(account.id for account in accounts) + 1
+
+def get_monitor_accounts_settings() -> MonitorAccountsSettings:
+    return load_storage().monitor_accounts
+
+
+def toggle_monitor_accounts() -> bool:
+    storage_data = load_storage()
+    storage_data.monitor_accounts.enabled = not storage_data.monitor_accounts.enabled
+    save_storage(storage_data)
+    return storage_data.monitor_accounts.enabled
+
+
+def update_monitor_accounts_last_run():
+    storage_data = load_storage()
+    storage_data.monitor_accounts.last_run = datetime.now()
+    save_storage(storage_data)
+
+
+def set_monitor_posts_settings(settings: MonitorPostsSettings):
+    storage_data = load_storage()
+    storage_data.monitor_posts = settings
+    save_storage(storage_data)
+
+
+def get_monitor_posts_settings() -> MonitorPostsSettings:
+    return load_storage().monitor_posts
+
+
+def toggle_monitor_posts() -> bool:
+    storage_data = load_storage()
+    storage_data.monitor_posts.enabled = not storage_data.monitor_posts.enabled
+    save_storage(storage_data)
+    return storage_data.monitor_posts.enabled
+
+
+def update_monitor_posts_last_run():
+    storage_data = load_storage()
+    storage_data.monitor_posts.last_run = datetime.now()
+    save_storage(storage_data)

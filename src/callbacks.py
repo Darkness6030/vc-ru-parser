@@ -32,15 +32,15 @@ class ParseNowCallback(CallbackData, prefix='parse_now'):
     mode: Optional[str]
 
 
-class PeriodicityCallback(CallbackData, prefix='periodicity'):
-    pass
-
-
 class AccountsCallback(CallbackData, prefix='accounts'):
     pass
 
 
-class TogglePauseCallback(CallbackData, prefix='start_pause'):
+class RegularParsingToggleCallback(CallbackData, prefix='regular_parsing_toggle'):
+    pass
+
+
+class RegularParsingPeriodicityCallback(CallbackData, prefix='regular_parsing_periodicity'):
     pass
 
 
@@ -72,6 +72,50 @@ class DeleteInvalidConfirmCallback(CallbackData, prefix='delete_invalid_confirm'
     confirm: bool
 
 
+class MonitorAccountsCallback(CallbackData, prefix='monitor_accounts'):
+    pass
+
+
+class MonitorAccountsToggleCallback(CallbackData, prefix='monitor_accounts_toggle'):
+    pass
+
+
+class MonitorAccountsPeriodicityCallback(CallbackData, prefix='monitor_accounts_periodicity'):
+    pass
+
+
+class MonitorAccountsToggleChangeURLCallback(CallbackData, prefix='monitor_accounts_toggle_change_url'):
+    pass
+
+
+class MonitorAccountsToggleBlockingCallback(CallbackData, prefix='monitor_accounts_toggle_blocking'):
+    pass
+
+
+class MonitorAccountsSitesCallback(CallbackData, prefix='monitor_accounts_sites'):
+    toggle_dtf: bool = False
+    toggle_vc: bool = False
+    toggle_tenchat: bool = False
+
+
+class MonitorPostsCallback(CallbackData, prefix='monitor_posts'):
+    pass
+
+
+class MonitorPostsToggleCallback(CallbackData, prefix='monitor_posts_toggle'):
+    pass
+
+
+class MonitorPostsPeriodicityCallback(CallbackData, prefix='monitor_posts_periodicity'):
+    pass
+
+
+class MonitorPostsSitesCallback(CallbackData, prefix='monitor_posts_sites'):
+    toggle_dtf: bool = False
+    toggle_vc: bool = False
+    toggle_tenchat: bool = False
+
+
 menu_keyboard = InlineKeyboardBuilder() \
     .button(text='Выгрузить данные в JSON', callback_data=LoadModeCallback(mode='json')) \
     .button(text='Выгрузить данные в Google таблицы', callback_data=LoadModeCallback(mode='google')) \
@@ -81,5 +125,15 @@ menu_keyboard = InlineKeyboardBuilder() \
 
 regular_parsing_keyboard = InlineKeyboardBuilder() \
     .button(text='Назад', callback_data=RegularParsingCallback()) \
+    .button(text='Назад в меню', callback_data=MainMenuCallback()) \
+    .as_markup()
+
+monitor_accounts_keyboard = InlineKeyboardBuilder() \
+    .button(text='Назад', callback_data=MonitorAccountsCallback()) \
+    .button(text='Назад в меню', callback_data=MainMenuCallback()) \
+    .as_markup()
+
+monitor_posts_keyboard = InlineKeyboardBuilder() \
+    .button(text='Назад', callback_data=MonitorPostsCallback()) \
     .button(text='Назад в меню', callback_data=MainMenuCallback()) \
     .as_markup()

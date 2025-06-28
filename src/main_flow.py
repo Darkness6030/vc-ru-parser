@@ -1,4 +1,6 @@
 import asyncio
+import logging
+from datetime import datetime
 from typing import Match
 
 from aiogram import Dispatcher, Router, F
@@ -10,8 +12,9 @@ from aiohttp import ClientError
 from rewire import simple_plugin
 
 from src import api, bot, utils, storage
-from src.callbacks import LoadModeCallback, CancelParsingCallback, ParseAllCallback, ParseAmountCallback, RegularParsingCallback, ParseNowCallback, TogglePauseCallback, ParseAccountCallback, AccountInfoCallback, AddAccountCallback, AccountsCallback, PeriodicityCallback, EditAccountCallback, DeleteAccountCallback, MainMenuCallback, menu_keyboard, regular_parsing_keyboard, DeleteInvalidCallback, DeleteInvalidConfirmCallback
-from src.schedules import parse_account
+from src.callbacks import LoadModeCallback, CancelParsingCallback, ParseAllCallback, ParseAmountCallback, RegularParsingCallback, ParseNowCallback, RegularParsingToggleCallback, ParseAccountCallback, AccountInfoCallback, AddAccountCallback, AccountsCallback, RegularParsingPeriodicityCallback, EditAccountCallback, DeleteAccountCallback, MainMenuCallback, menu_keyboard, regular_parsing_keyboard, DeleteInvalidCallback, DeleteInvalidConfirmCallback, MonitorAccountsCallback, \
+    MonitorPostsCallback, MonitorAccountsToggleCallback, MonitorAccountsToggleChangeURLCallback, MonitorAccountsToggleBlockingCallback, MonitorAccountsPeriodicityCallback, monitor_accounts_keyboard, MonitorAccountsSitesCallback, MonitorPostsPeriodicityCallback, MonitorPostsToggleCallback, MonitorPostsSitesCallback, monitor_posts_keyboard
+from src.schedules import parse_account_posts
 from src.states import UserState
 
 plugin = simple_plugin()
@@ -105,14 +108,6 @@ async def load_json(message: Message, state: FSMContext):
     if not domain or not username:
         return await message.reply('❌ Ошибка: Пользователя не существует. Попробуйте ещё раз:')
 
-    if domain == 'tenchat.ru':
-        if not await api.is_valid_tenchat_user(message.text):
-            return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
-    else:
-        user_data = await api.fetch_user_data(domain, id=user_id)
-        if user_data['name'] in ('Аккаунт удален', 'Удаленный аккаунт'):
-            return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
-
     amount = await state.get_value('amount')
     await state.clear()
 
@@ -159,14 +154,6 @@ async def load_google(message: Message, state: FSMContext):
     if not domain or not username:
         return await message.reply('❌ Ошибка: Пользователя не существует. Попробуйте ещё раз:')
 
-    if domain == 'tenchat.ru':
-        if not await api.is_valid_tenchat_user(message.text):
-            return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
-    else:
-        user_data = await api.fetch_user_data(domain, id=user_id)
-        if user_data['name'] in ('Аккаунт удален', 'Удаленный аккаунт'):
-            return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
-
     amount = await state.get_value('amount')
     await state.clear()
 
@@ -191,7 +178,7 @@ async def load_google(message: Message, state: FSMContext):
     await started_message.edit_reply_markup()
     await message.answer(f'📤 Получены данные {len(user_posts)} постов. Сохраняю в Google таблицу...')
 
-    await utils.unload_posts_to_sheets(domain, username, user_posts)
+    await utils.unload_user_posts(domain, username, user_posts)
     await message.reply(
         f'✅ Все данные пользователя {username} успешно сохранены в Google таблицу.',
         reply_markup=menu_keyboard
@@ -200,43 +187,51 @@ async def load_google(message: Message, state: FSMContext):
 
 @router.callback_query(RegularParsingCallback.filter())
 async def regular_parsing_callback(callback: CallbackQuery):
-    is_paused = storage.is_paused()
-    pause_status = '⏸️ Парсинг: пауза' if is_paused else '✅ Парсинг: работает'
+    storage_data = storage.load_storage()
+    regular_parsing_status = '✅ Парсинг: работает' if storage_data.regular_parsing.enabled else '⏸️ Парсинг: пауза'
 
     await callback.message.edit_text(
         '⚙️ Настройки регулярного парсинга:',
         reply_markup=InlineKeyboardBuilder()
         .button(text='👤 Кого парсим', callback_data=AccountsCallback())
-        .button(text='⏰ Периодичность', callback_data=PeriodicityCallback())
-        .button(text=pause_status, callback_data=TogglePauseCallback())
+        .button(text='⏰ Периодичность', callback_data=RegularParsingPeriodicityCallback())
+        .button(text=regular_parsing_status, callback_data=RegularParsingToggleCallback())
         .button(text='🔄 Спарсить сейчас', callback_data=ParseNowCallback(mode='menu'))
         .button(text='❌ Удалить невалид', callback_data=DeleteInvalidCallback())
+        .button(text='📊 Мониторинг аккаунтов', callback_data=MonitorAccountsCallback())
+        .button(text='📰 Мониторинг статей', callback_data=MonitorPostsCallback())
         .button(text='< Назад в меню', callback_data=MainMenuCallback())
         .adjust(1)
         .as_markup()
     )
 
 
-@router.callback_query(PeriodicityCallback.filter())
-async def periodicity_callback(callback: CallbackQuery, state: FSMContext):
-    periodicity = storage.get_periodicity()
+@router.callback_query(RegularParsingToggleCallback.filter())
+async def regular_parsing_toggle_callback(callback: CallbackQuery):
+    storage.toggle_regular_parsing()
+    await regular_parsing_callback(callback)
+
+
+@router.callback_query(RegularParsingPeriodicityCallback.filter())
+async def regular_parsing_periodicity_callback(callback: CallbackQuery, state: FSMContext):
+    periodicity = storage.get_regular_parsing_periodicity()
     if periodicity:
-        await state.set_state(UserState.periodicity_input)
+        await state.set_state(UserState.regular_parsing_periodicity)
         await callback.message.answer(
             'Текущая периодичность: '
             f'\nКаждые {periodicity.interval} дней, в {periodicity.time.strftime('%H:%M')} по Москве.\n'
             '\nВведите новую периодичность (Пример: 1 21:00):'
         )
     else:
-        await state.set_state(UserState.periodicity_input)
+        await state.set_state(UserState.regular_parsing_periodicity)
         await callback.message.answer(
             'Периодичность пока не задана.'
             '\nВведите новую периодичность (Пример: 1 21:00):'
         )
 
 
-@router.message(UserState.periodicity_input, F.text.regexp(r"^(\d+)\s+(\d{1,2}:\d{2})$").as_("match"))
-async def periodicity_input(message: Message, state: FSMContext, match: Match[str]):
+@router.message(UserState.regular_parsing_periodicity, F.text.regexp(r"^(\d+)\s+(\d{1,2}:\d{2})$").as_("match"))
+async def regular_parsing_periodicity_input(message: Message, state: FSMContext, match: Match[str]):
     interval = match.group(1)
     time_str = match.group(2)
 
@@ -244,7 +239,7 @@ async def periodicity_input(message: Message, state: FSMContext, match: Match[st
     if not parsed_time:
         return await message.reply('⚠️ Неверный формат времени. Используйте HH:MM (например: 21:00)')
 
-    storage.set_periodicity(
+    storage.set_regular_parsing_periodicity(
         interval=interval,
         time=parsed_time
     )
@@ -276,7 +271,7 @@ async def accounts_callback(callback: CallbackQuery):
 
 @router.callback_query(AddAccountCallback.filter())
 async def add_account_callback(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(UserState.add_account_input)
+    await state.set_state(UserState.add_account)
     await callback.message.answer(
         'Введите данные аккаунта в формате:\n'
         '<code>ссылка тип_парсинга (табл/серв/оба)</code>\n'
@@ -284,7 +279,7 @@ async def add_account_callback(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.message(UserState.add_account_input, F.text.regexp(r'^\S+\s+\S+$'))
+@router.message(UserState.add_account, F.text.regexp(r'^\S+\s+\S+$'))
 async def add_account_input(message: Message, state: FSMContext):
     url, mode = message.text.split(maxsplit=2)
     if mode not in PARSING_MODES:
@@ -302,13 +297,12 @@ async def add_account_input(message: Message, state: FSMContext):
     if not domain or not username:
         return await message.reply('❌ Ошибка: Пользователя не существует. Попробуйте ещё раз:')
 
-    if domain == 'tenchat.ru':
-        if not await api.is_valid_tenchat_user(url):
-            return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
-    else:
-        user_data = await api.fetch_user_data(domain, id=user_id)
-        if user_data['name'] in ('Аккаунт удален', 'Удаленный аккаунт'):
-            return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
+    user_data = await api.fetch_tenchat_user_data(username) \
+        if domain == 'tenchat.ru' else \
+        await api.fetch_user_data(domain, id=user_id)
+
+    # if user_data['is_blocked']:
+    #     return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
 
     for account in storage.get_accounts():
         if account.url == url:
@@ -319,7 +313,7 @@ async def add_account_input(message: Message, state: FSMContext):
         mode=mode,
         domain=domain,
         username=username,
-        user_id=user_id
+        user_id=user_id,
     )
 
     await state.clear()
@@ -352,7 +346,7 @@ async def edit_account_callback(callback: CallbackQuery, callback_data: EditAcco
     if not account:
         return
 
-    await state.set_state(UserState.edit_account_input)
+    await state.set_state(UserState.edit_account)
     await state.update_data(account_id=callback_data.account_id)
     await callback.message.answer(
         'Введите новые данные в формате:\n'
@@ -361,7 +355,7 @@ async def edit_account_callback(callback: CallbackQuery, callback_data: EditAcco
     )
 
 
-@router.message(UserState.edit_account_input, F.text.regexp(r'^\S+\s+\S+$'))
+@router.message(UserState.edit_account, F.text.regexp(r'^\S+\s+\S+$'))
 async def account_edit_input(message: Message, state: FSMContext):
     url, mode = message.text.split(maxsplit=2)
     if mode not in PARSING_MODES:
@@ -379,13 +373,12 @@ async def account_edit_input(message: Message, state: FSMContext):
     if not domain or not username:
         return await message.reply('❌ Ошибка: Пользователя не существует. Попробуйте ещё раз:')
 
-    if domain == 'tenchat.ru':
-        if not await api.is_valid_tenchat_user(url):
-            return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
-    else:
-        user_data = await api.fetch_user_data(domain, id=user_id)
-        if user_data['name'] in ('Аккаунт удален', 'Удаленный аккаунт'):
-            return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
+    user_data = await api.fetch_tenchat_user_data(username) \
+        if domain == 'tenchat.ru' else \
+        await api.fetch_user_data(domain, id=user_id)
+
+    if user_data['is_blocked']:
+        return await message.reply('❌ Ошибка: Пользователь заблокирован. Попробуйте ещё раз:')
 
     account_id = await state.get_value('account_id')
     storage.update_account(
@@ -417,26 +410,19 @@ async def account_parse_callback(callback: CallbackQuery, callback_data: ParseAc
     if not account:
         return await callback.message.answer('❌ Аккаунт не найден.')
 
-    if account.domain == 'tenchat.ru':
-        if not await api.is_valid_tenchat_user(account.url):
-            return await callback.message.answer('❌ Аккаунт заблокирован.')
-    else:
-        user_data = await api.fetch_user_data(account.domain, id=account.user_id)
-        if user_data['name'] in ('Аккаунт удален', 'Удаленный аккаунт'):
-            return await callback.message.answer('❌ Аккаунт заблокирован.')
+    user_data = await api.fetch_tenchat_user_data(account.username) \
+        if account.domain == 'tenchat.ru' else \
+        await api.fetch_user_data(account.domain, id=account.user_id)
+
+    if user_data['is_blocked']:
+        return await callback.message.reply('❌ Пользователь заблокирован.')
 
     await callback.message.edit_text(f'🔄 Парсинг аккаунта {account.username}...')
     try:
-        await parse_account(account)
+        await parse_account_posts(account)
         await callback.message.answer(f'✅ Парсинг завершён!\n{account.url}', reply_markup=regular_parsing_keyboard)
     except Exception as e:
         await callback.message.answer(f'❌ Ошибка парсинга:\n{str(e)}\n{account.url}', reply_markup=regular_parsing_keyboard, parse_mode=None)
-
-
-@router.callback_query(TogglePauseCallback.filter())
-async def toggle_pause_callback(callback: CallbackQuery):
-    storage.toggle_pause()
-    await regular_parsing_callback(callback)
 
 
 @router.callback_query(ParseNowCallback.filter())
@@ -464,7 +450,7 @@ async def parse_now_callback(callback: CallbackQuery, callback_data: ParseNowCal
     async def safe_parse(account):
         nonlocal success_count, failed_count
         try:
-            await parse_account(account, mode=callback_data.mode)
+            await parse_account_posts(account, mode=callback_data.mode)
             success_count += 1
         except Exception:
             failed_count += 1
@@ -529,6 +515,193 @@ async def delete_invalid_confirm_callback(callback: CallbackQuery, callback_data
 
     storage.set_last_failed_accounts([])
     await callback.message.edit_text(f'✅ Удалено {len(last_failed_accounts)} аккаунтов.', reply_markup=regular_parsing_keyboard)
+
+
+@router.callback_query(MonitorAccountsCallback.filter())
+async def monitor_accounts_callback(callback: CallbackQuery):
+    accounts_settings = storage.get_monitor_accounts_settings()
+    accounts_status = '✅ Мониторинг: ON' if accounts_settings.enabled else '❌ Мониторинг: OFF'
+    change_url_status = '✅ Смена URL: ON' if accounts_settings.url_change_enabled else '❌ Смена URL: OFF'
+    blocking_status = '✅ Блокировки: ON' if accounts_settings.blocking_enabled else '❌ Блокировки: OFF'
+
+    await callback.message.edit_text(
+        '⚙️ Настройки мониторинга аккаунтов:',
+        reply_markup=InlineKeyboardBuilder()
+        .button(text=accounts_status, callback_data=MonitorAccountsToggleCallback())
+        .button(text='⏳ Периодичность', callback_data=MonitorAccountsPeriodicityCallback())
+        .button(text=change_url_status, callback_data=MonitorAccountsToggleChangeURLCallback())
+        .button(text=blocking_status, callback_data=MonitorAccountsToggleBlockingCallback())
+        .button(text='🖥 Настройки сайтов', callback_data=MonitorAccountsSitesCallback())
+        .button(text='Назад', callback_data=RegularParsingCallback())
+        .adjust(1)
+        .as_markup()
+    )
+
+
+@router.callback_query(MonitorAccountsToggleCallback.filter())
+async def monitor_accounts_toggle_callback(callback: CallbackQuery):
+    storage.toggle_monitor_accounts()
+    await monitor_accounts_callback(callback)
+
+
+@router.callback_query(MonitorAccountsPeriodicityCallback.filter())
+async def monitor_accounts_periodicity_callback(callback: CallbackQuery, state: FSMContext):
+    accounts_settings = storage.get_monitor_accounts_settings()
+    if accounts_settings.periodicity:
+        await state.set_state(UserState.monitor_accounts_periodicity)
+        await callback.message.answer(
+            'Текущая периодичность: '
+            f'\nКаждые {accounts_settings.periodicity} минут.\n'
+            '\nВведите новую периодичность (Пример: 30):'
+        )
+    else:
+        await state.set_state(UserState.monitor_accounts_periodicity)
+        await callback.message.answer(
+            'Периодичность пока не задана.'
+            '\nВведите новую периодичность (Пример: 30):'
+        )
+
+
+@router.message(UserState.monitor_accounts_periodicity, F.text.isdigit())
+async def monitor_accounts_periodicity_input(message: Message, state: FSMContext):
+    accounts_settings = storage.get_monitor_accounts_settings()
+    accounts_settings.periodicity = int(message.text)
+    storage.set_monitor_accounts_settings(accounts_settings)
+
+    await state.clear()
+    await message.answer('✅ Периодичность обновлена!', reply_markup=monitor_accounts_keyboard)
+
+
+@router.callback_query(MonitorAccountsToggleChangeURLCallback.filter())
+async def monitor_accounts_toggle_change_url_callback(callback: CallbackQuery):
+    accounts_settings = storage.get_monitor_accounts_settings()
+    accounts_settings.url_change_enabled = not accounts_settings.url_change_enabled
+    storage.set_monitor_accounts_settings(accounts_settings)
+    await monitor_accounts_callback(callback)
+
+
+@router.callback_query(MonitorAccountsToggleBlockingCallback.filter())
+async def monitor_accounts_toggle_blocking_callback(callback: CallbackQuery):
+    accounts_settings = storage.get_monitor_accounts_settings()
+    accounts_settings.blocking_enabled = not accounts_settings.blocking_enabled
+    storage.set_monitor_accounts_settings(accounts_settings)
+    await monitor_accounts_callback(callback)
+
+
+@router.callback_query(MonitorAccountsSitesCallback.filter())
+async def monitor_accounts_sites_callback(callback: CallbackQuery, callback_data: MonitorAccountsSitesCallback):
+    accounts_settings = storage.get_monitor_accounts_settings()
+    if callback_data.toggle_dtf:
+        accounts_settings.dtf_enabled = not accounts_settings.dtf_enabled
+    elif callback_data.toggle_vc:
+        accounts_settings.vc_enabled = not accounts_settings.vc_enabled
+    elif callback_data.toggle_tenchat:
+        accounts_settings.tenchat_enabled = not accounts_settings.tenchat_enabled
+
+    storage.set_monitor_accounts_settings(accounts_settings)
+    dtf_status = '✅ DTF: ON' if accounts_settings.dtf_enabled else '❌ DTF: OFF'
+    vc_status = '✅ VC: ON' if accounts_settings.vc_enabled else '❌ VC: OFF'
+    tenchat_status = '✅ TenChat: ON' if accounts_settings.tenchat_enabled else '❌ TenChat: OFF'
+
+    await callback.message.edit_text(
+        '⚙️ Настройки сайтов:',
+        reply_markup=InlineKeyboardBuilder()
+        .button(text=dtf_status, callback_data=MonitorAccountsSitesCallback(toggle_dtf=True))
+        .button(text=vc_status, callback_data=MonitorAccountsSitesCallback(toggle_vc=True))
+        .button(text=tenchat_status, callback_data=MonitorAccountsSitesCallback(toggle_tenchat=True))
+        .button(text='Назад', callback_data=MonitorAccountsCallback())
+        .adjust(1)
+        .as_markup()
+    )
+
+
+@router.callback_query(MonitorPostsCallback.filter())
+async def monitor_posts_callback(callback: CallbackQuery):
+    posts_settings = storage.get_monitor_posts_settings()
+    posts_status = '✅ Мониторинг: ON' if posts_settings.enabled else '❌ Мониторинг: OFF'
+
+    await callback.message.edit_text(
+        '⚙️ Настройки мониторинга постов:',
+        reply_markup=InlineKeyboardBuilder()
+        .button(text=posts_status, callback_data=MonitorPostsToggleCallback())
+        .button(text='⏳ Периодичность', callback_data=MonitorPostsPeriodicityCallback())
+        .button(text='🖥 Настройки сайтов', callback_data=MonitorPostsSitesCallback())
+        .button(text='Назад', callback_data=RegularParsingCallback())
+        .adjust(1)
+        .as_markup()
+    )
+
+
+@router.callback_query(MonitorPostsToggleCallback.filter())
+async def monitor_posts_toggle_callback(callback: CallbackQuery):
+    storage.toggle_monitor_posts()
+    await monitor_posts_callback(callback)
+
+
+@router.callback_query(MonitorPostsPeriodicityCallback.filter())
+async def monitor_posts_periodicity_callback(callback: CallbackQuery, state: FSMContext):
+    posts_settings = storage.get_monitor_posts_settings()
+    formatted_periodicity = ', '.join(time.strftime('%H:%M') for time in posts_settings.periodicity) if posts_settings.periodicity else 'не задана'
+
+    await state.set_state(UserState.monitor_posts_periodicity)
+    await callback.message.answer(
+        f'Текущая периодичность: {formatted_periodicity}'
+        '\nВведите время в формате ЧЧ:ММ, по одному на строку:'
+    )
+
+
+@router.message(UserState.monitor_posts_periodicity, F.text)
+async def monitor_posts_periodicity_input(message: Message, state: FSMContext):
+    periodicity = []
+    for line in message.text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        try:
+            parsed_time = datetime.strptime(line, '%H:%M').time()
+            periodicity.append(parsed_time)
+        except ValueError:
+            await message.answer(f'❌ Неверный формат времени: `{line}`. Введите время в формате ЧЧ:ММ, по одному на строку.')
+            return
+
+    if not periodicity:
+        await message.answer('❌ Не найдено ни одного корректного времени. Введите время в формате ЧЧ:ММ, по одному на строку.')
+        return
+
+    posts_settings = storage.get_monitor_posts_settings()
+    posts_settings.periodicity = periodicity
+    storage.set_monitor_posts_settings(posts_settings)
+
+    await state.clear()
+    await message.answer('✅ Периодичность обновлена!', reply_markup=monitor_posts_keyboard)
+
+
+@router.callback_query(MonitorPostsSitesCallback.filter())
+async def monitor_posts_sites_callback(callback: CallbackQuery, callback_data: MonitorPostsSitesCallback):
+    posts_settings = storage.get_monitor_posts_settings()
+    if callback_data.toggle_dtf:
+        posts_settings.dtf_enabled = not posts_settings.dtf_enabled
+    elif callback_data.toggle_vc:
+        posts_settings.vc_enabled = not posts_settings.vc_enabled
+    elif callback_data.toggle_tenchat:
+        posts_settings.tenchat_enabled = not posts_settings.tenchat_enabled
+
+    storage.set_monitor_posts_settings(posts_settings)
+    dtf_status = '✅ DTF: ON' if posts_settings.dtf_enabled else '❌ DTF: OFF'
+    vc_status = '✅ VC: ON' if posts_settings.vc_enabled else '❌ VC: OFF'
+    tenchat_status = '✅ TenChat: ON' if posts_settings.tenchat_enabled else '❌ TenChat: OFF'
+
+    await callback.message.edit_text(
+        '⚙️ Настройки сайтов:',
+        reply_markup=InlineKeyboardBuilder()
+        .button(text=dtf_status, callback_data=MonitorPostsSitesCallback(toggle_dtf=True))
+        .button(text=vc_status, callback_data=MonitorPostsSitesCallback(toggle_vc=True))
+        .button(text=tenchat_status, callback_data=MonitorPostsSitesCallback(toggle_tenchat=True))
+        .button(text='Назад', callback_data=MonitorPostsCallback())
+        .adjust(1)
+        .as_markup()
+    )
 
 
 @plugin.setup()

@@ -30,7 +30,7 @@ async def parse_url(args: str) -> Optional[Tuple[Optional[str], Optional[str], O
         return None
 
     if domain == 'tenchat.ru':
-        return domain, path, None
+        return domain, path, int(path) if path.isdigit() else None
 
     match = re.match(r'(id(\d+))|u/(\d+)-([\w\-]+)|([\w\-]+)', path)
     if not match:
@@ -143,14 +143,14 @@ async def download_posts_files(domain: str, username: str, user_posts: list, las
     return user_posts_path
 
 
-async def unload_posts_to_sheets(domain: str, username: str, user_posts: list):
-    user_data = []
+async def unload_user_posts(domain: str, username: str, user_posts: list):
+    users_data = []
     for post_data in user_posts:
         date_now = datetime.now(pytz.timezone('Europe/Moscow'))
 
         if domain == 'tenchat.ru':
             date_published = datetime.fromisoformat(post_data['publishDate'])
-            user_data.append({
+            users_data.append({
                 'ID': post_data['id'],
                 'URL': f'https://tenchat.ru/media/{post_data['titleTransliteration']}',
                 'Название статьи': post_data['title'],
@@ -161,7 +161,7 @@ async def unload_posts_to_sheets(domain: str, username: str, user_posts: list):
             })
         else:
             date_published = datetime.fromtimestamp(post_data['date'], pytz.timezone('Europe/Moscow'))
-            user_data.append({
+            users_data.append({
                 'ID': post_data.get('id'),
                 'URL': post_data.get('url'),
                 'Название статьи': post_data['title'],
@@ -173,8 +173,12 @@ async def unload_posts_to_sheets(domain: str, username: str, user_posts: list):
 
     await sheets.update_user_data(
         title=f'{domain.split('.')[0][:3]}-{username}',
-        rows=user_data
+        users_data=users_data
     )
+
+
+async def load_user_posts(domain: str, username: str):
+    return await sheets.get_user_data(f'{domain.split('.')[0][:3]}-{username}')
 
 
 def extract_user_data(domain: str, username: str, user_posts: list[dict]) -> dict:

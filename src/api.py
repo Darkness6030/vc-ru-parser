@@ -1,5 +1,5 @@
 import asyncio
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Union
 
 from aiohttp import ClientSession
 from bs4 import BeautifulSoup
@@ -13,17 +13,23 @@ async def fetch_user_data(domain: str, **kwargs) -> Optional[Dict]:
     params = {'markdown': 'False', **kwargs}
 
     async with ClientSession() as session:
-        async with session.get(base_url, params=params) as response:
+        async with session.get(base_url, params=params, timeout=None) as response:
             if not response.ok:
                 return None
 
             result = await response.json()
-            return result['result']
+            user_data = result['result']
+
+            return {
+                'url': user_data['url'],
+                'name': user_data['name'],
+                'is_blocked': user_data['robotsTag'] == 'noindex'
+            }
 
 
-async def fetch_tenchat_user_name(user_url: str) -> Optional[str]:
+async def fetch_tenchat_user_data(username_or_id: Union[str, int]) -> Optional[Dict]:
     async with ClientSession() as session:
-        async with session.get(user_url) as response:
+        async with session.get(f'https://tenchat.ru/{username_or_id}', timeout=None, allow_redirects=True) as response:
             if not response.ok:
                 return None
 
@@ -31,23 +37,19 @@ async def fetch_tenchat_user_name(user_url: str) -> Optional[str]:
             soup = BeautifulSoup(html, 'html.parser')
 
             name_element = soup.find('h1', {'data-cy': 'name'})
-            return name_element.get_text(separator=' ', strip=True)
+            name = name_element.get_text(separator=' ', strip=True) if name_element else ''
+
+            blocked_element = soup.find('div', {'data-cy': 'blocked'})
+            is_blocked = blocked_element is not None
+
+            return {
+                'url': str(response.url),
+                'name': name,
+                'is_blocked': is_blocked
+            }
 
 
-async def is_valid_tenchat_user(user_url: str) -> bool:
-    async with ClientSession() as session:
-        async with session.get(user_url) as response:
-            if not response.ok:
-                return True
-
-            html = await response.text()
-            soup = BeautifulSoup(html, 'html.parser')
-
-            blocked_div = soup.find('div', {'data-cy': 'blocked'})
-            return blocked_div is None
-
-
-async def fetch_user_posts(domain: str, user_id: int, posts_amount: Optional[int] = None):
+async def fetch_user_posts(domain: str, user_id: int, posts_amount: Optional[int] = None) -> List[Dict]:
     base_url = f'https://api.{domain}/v2.8/timeline'
     params = {'markdown': 'false', 'sorting': 'new', 'subsitesIds': user_id}
 
@@ -55,7 +57,7 @@ async def fetch_user_posts(domain: str, user_id: int, posts_amount: Optional[int
     async with ClientSession() as session:
         while True:
             await asyncio.sleep(1)
-            async with session.get(base_url, params=params) as response:
+            async with session.get(base_url, params=params, timeout=None) as response:
                 response.raise_for_status()
                 result = await response.json()
 
@@ -77,17 +79,17 @@ async def fetch_user_posts(domain: str, user_id: int, posts_amount: Optional[int
     return posts
 
 
-async def fetch_tenchat_posts(username: str, posts_amount: Optional[int] = None):
+async def fetch_tenchat_posts(username: str, posts_amount: Optional[int] = None) -> List[Dict]:
     page = 0
     posts = []
 
     async with ClientSession() as session:
         while True:
-            async with session.get(f'{TENCHAT_BASE_URL}/{username}?page={page}&size={TENCHAT_BASE_SIZE}') as response:
+            async with session.get(f'{TENCHAT_BASE_URL}/{username}?page={page}&size={TENCHAT_BASE_SIZE}', timeout=None) as response:
                 response.raise_for_status()
-                data = await response.json()
+                response_data = await response.json()
 
-                content = data.get('content', [])
+                content = response_data.get('content', [])
                 if not content:
                     break
 

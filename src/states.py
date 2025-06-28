@@ -5,6 +5,9 @@ class UserState(StatesGroup):
     amount_select = State()
     amount_input = State()
     url_select = State()
-    periodicity_input = State()
-    add_account_input = State()
-    edit_account_input = State()
+    add_account = State()
+    edit_account = State()
+    regular_parsing_periodicity = State()
+    monitor_accounts_periodicity = State()
+    monitor_posts_periodicity = State()
+
