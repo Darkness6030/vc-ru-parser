@@ -123,7 +123,8 @@ async def load_json(message: Message, state: FSMContext):
         else:
             user_posts = await api.fetch_user_posts(domain, user_id, amount)
     except ClientError:
-        return await started_message.edit_text('⚠️ Ошибка при получении постов: пользователь не найден или произошёл сбой.')
+        await started_message.edit_text('⚠️ Ошибка при получении постов: пользователь не найден или произошёл сбой.')
+        raise
 
     if await state.get_value('cancelled'):
         return await state.clear()
@@ -169,7 +170,8 @@ async def load_google(message: Message, state: FSMContext):
         else:
             user_posts = await api.fetch_user_posts(domain, user_id, amount)
     except ClientError:
-        return await started_message.edit_text('⚠️ Ошибка при получении постов: пользователь не найден или произошёл сбой.')
+        await started_message.edit_text('⚠️ Ошибка при получении постов: пользователь не найден или произошёл сбой.')
+        raise
 
     if await state.get_value('cancelled'):
         return await state.clear()
@@ -539,7 +541,12 @@ async def monitor_accounts_callback(callback: CallbackQuery):
 
 @router.callback_query(MonitorAccountsToggleCallback.filter())
 async def monitor_accounts_toggle_callback(callback: CallbackQuery):
-    storage.toggle_monitor_accounts()
+    if storage.toggle_monitor_accounts():
+        accounts_settings = storage.get_monitor_accounts_settings()
+        accounts_settings.url_change_enabled = True
+        accounts_settings.blocking_enabled = True
+        storage.set_monitor_accounts_settings(accounts_settings)
+
     await monitor_accounts_callback(callback)
 
 
@@ -551,13 +558,13 @@ async def monitor_accounts_periodicity_callback(callback: CallbackQuery, state: 
         await callback.message.answer(
             'Текущая периодичность: '
             f'\nКаждые {accounts_settings.periodicity} минут.\n'
-            '\nВведите новую периодичность (Пример: 30):'
+            '\nВведите новую периодичность в минутах (Пример: 30):'
         )
     else:
         await state.set_state(UserState.monitor_accounts_periodicity)
         await callback.message.answer(
             'Периодичность пока не задана.'
-            '\nВведите новую периодичность (Пример: 30):'
+            '\nВведите новую периодичность в минутах (Пример: 30):'
         )
 
 
@@ -645,7 +652,7 @@ async def monitor_posts_periodicity_callback(callback: CallbackQuery, state: FSM
     await state.set_state(UserState.monitor_posts_periodicity)
     await callback.message.answer(
         f'Текущая периодичность: {formatted_periodicity}'
-        '\nВведите время в формате ЧЧ:ММ, по одному на строку:'
+        '\nВведите время в формате ЧЧ:ММ по Москве, по одному на строку:'
     )
 
 

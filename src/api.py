@@ -1,11 +1,14 @@
 import asyncio
 from typing import Optional, Dict, List, Union
 
-from aiohttp import ClientSession
+from aiohttp import ClientSession, BasicAuth
 from bs4 import BeautifulSoup
 
 TENCHAT_BASE_URL = 'https://tenchat.ru/gostinder/api/web/post/user/username'
 TENCHAT_BASE_SIZE = 9
+
+TENCHAT_PROXY = "http://eu.lunaproxy.com:12233"
+TENCHAT_PROXY_AUTH = BasicAuth('user-reyingand_P0xoC-region-ru', '9QHJTXpnE07o')
 
 
 async def fetch_user_data(domain: str, **kwargs) -> Optional[Dict]:
@@ -29,7 +32,13 @@ async def fetch_user_data(domain: str, **kwargs) -> Optional[Dict]:
 
 async def fetch_tenchat_user_data(username_or_id: Union[str, int]) -> Optional[Dict]:
     async with ClientSession() as session:
-        async with session.get(f'https://tenchat.ru/{username_or_id}', timeout=None, allow_redirects=True) as response:
+        async with session.get(
+                f'https://tenchat.ru/{username_or_id}',
+                timeout=None,
+                allow_redirects=True,
+                proxy=TENCHAT_PROXY,
+                proxy_auth=TENCHAT_PROXY_AUTH
+        ) as response:
             if not response.ok:
                 return None
 
@@ -85,7 +94,12 @@ async def fetch_tenchat_posts(username: str, posts_amount: Optional[int] = None)
 
     async with ClientSession() as session:
         while True:
-            async with session.get(f'{TENCHAT_BASE_URL}/{username}?page={page}&size={TENCHAT_BASE_SIZE}', timeout=None) as response:
+            async with session.get(
+                    f'{TENCHAT_BASE_URL}/{username}?page={page}&size={TENCHAT_BASE_SIZE}',
+                    timeout=None,
+                    proxy=TENCHAT_PROXY,
+                    proxy_auth=TENCHAT_PROXY_AUTH
+            ) as response:
                 response.raise_for_status()
                 response_data = await response.json()
 

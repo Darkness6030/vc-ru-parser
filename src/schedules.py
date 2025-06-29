@@ -23,7 +23,6 @@ async def parse_account_posts(account: Account, mode: Optional[str] = None):
             if domain == 'tenchat.ru' else \
             await api.fetch_user_data(domain, id=user_id)
 
-        account.url = user_data['url']
         account.name = user_data['name']
         storage.update_account(account.id, url=account.url, name=account.name)
 
@@ -146,7 +145,7 @@ async def schedule_regular_parsing_runner():
                     failed_count += 1
                     failed_accounts.append(account)
 
-            tasks = [safe_parse(account) for account in storage.get_accounts()]
+            tasks = [safe_parse(account) for account in storage.get_accounts() if not account.is_blocked]
             await asyncio.gather(*tasks)
 
             result_lines = [
@@ -164,6 +163,10 @@ async def schedule_regular_parsing_runner():
                 result_lines.append('\n❗️Не удалось спарсить следующие аккаунты:')
                 for index, account in enumerate(failed_accounts, start=1):
                     result_lines.append(f'{account.url} ({account.name or account.username})')
+
+                for account in failed_accounts:
+                    account.is_blocked = True
+                    storage.update_account(account.id, is_blocked=True)
 
                 inline_keyboard.button(text='❌ Удалить невалид', callback_data=DeleteInvalidCallback())
                 storage.set_last_failed_accounts(failed_accounts)
@@ -189,7 +192,7 @@ async def schedule_monitor_accounts_runner():
                 continue
 
             logger.info('🔄 Запуск мониторинга аккаунтов...')
-            accounts = storage.get_accounts()
+            accounts = [account for account in storage.get_accounts()]
             storage.update_monitor_accounts_last_run()
 
             changed_accounts = []
@@ -200,37 +203,48 @@ async def schedule_monitor_accounts_runner():
                 domain, username, user_id = account.domain, account.username, account.user_id
                 logger.debug(f'Проверка аккаунта {username} (ID: {user_id})')
 
-                user_data = await api.fetch_tenchat_user_data(username) \
-                    if domain == 'tenchat.ru' else \
-                    await api.fetch_user_data(domain, id=user_id)
+                try:
+                    user_data = await api.fetch_tenchat_user_data(username) \
+                        if domain == 'tenchat.ru' else \
+                        await api.fetch_user_data(domain, id=user_id)
+                except Exception as e:
+                    logger.error(f'Ошибка при получении данных для {account.username}: {e}', exc_info=True)
+                    user_data = {'url': account.last_url, 'name': account.name, 'is_blocked': True}
 
                 url_changed = user_data['url'] != account.last_url
                 blocked_changed = user_data['is_blocked'] != account.is_blocked
 
-                if url_changed or blocked_changed:
-                    if url_changed:
-                        status = 'смена URL' if account.last_url else 'перв.монит'
-                        logger.info(f'Обнаружено изменение URL для {username}: {account.last_url} -> {user_data['url']}')
-                        if account.last_url:
-                            url_changed_accounts.append({
-                                'user_url': account.url,
-                                'old_url': account.last_url,
-                                'new_url': user_data['url'],
-                            })
-                        storage.update_account(account.id, last_url=user_data['url'])
-                    else:
-                        status = 'заблокирован' if user_data['is_blocked'] else 'разблокирован'
-                        logger.warning(f'Обнаружено изменение статуса блокировки для {username}: {status}')
-                        if user_data['is_blocked']:
-                            blocked_accounts.append(account.user_id)
-                        storage.update_account(account.id, is_blocked=user_data['is_blocked'])
+                if url_changed:
+                    status = 'смена URL' if account.last_url else 'перв.монит'
+                    logger.info(f'Обнаружено изменение URL для {username}: {account.last_url} -> {user_data['url']}')
+                    if account.last_url:
+                        url_changed_accounts.append({
+                            'user_url': account.url,
+                            'old_url': account.last_url,
+                            'new_url': user_data['url'],
+                        })
 
-                    changed_accounts.append({
-                        'url': account.url,
-                        'name': account.name or account.username,
-                        'status': status,
-                        'current_url': user_data['url']
-                    })
+                    account.name = user_data['name']
+                    account.last_url = user_data['url']
+                    storage.update_account(account.id, name=account.name, last_url=account.last_url)
+                elif blocked_changed:
+                    status = 'заблокирован' if user_data['is_blocked'] else 'разблокирован'
+                    logger.warning(f'Обнаружено изменение статуса блокировки для {username}: {status}')
+                    if user_data['is_blocked']:
+                        blocked_accounts.append(account.username)
+
+                    account.name = user_data['name']
+                    account.is_blocked = user_data['is_blocked']
+                    storage.update_account(account.id, name=account.name, is_blocked=account.is_blocked)
+                else:
+                    continue
+
+                changed_accounts.append({
+                    'url': account.url,
+                    'name': account.name or account.username,
+                    'status': status,
+                    'current_url': account.last_url
+                })
 
             if url_changed_accounts or blocked_accounts:
                 total_count = len(accounts)
@@ -253,13 +267,13 @@ async def schedule_monitor_accounts_runner():
 
                 if blocked_accounts:
                     message_lines.append('\nЗаблочены:')
-                    for user_id in blocked_accounts:
-                        message_lines.append(f'<code>{user_id}</code>')
+                    for username in blocked_accounts:
+                        message_lines.append(f'{username}')
 
                 if url_changed_accounts:
                     message_lines.append('\nСмена URL:')
                     for item in url_changed_accounts:
-                        message_lines.append(f'{item['user_url']}: {item['old_url']} > {item['new_url']}')
+                        message_lines.append(f'{item['user_url']} : {item['old_url']} > {item['new_url']}')
 
                 await bot.send_to_admins('\n'.join(message_lines))
 
@@ -280,7 +294,7 @@ async def schedule_monitor_posts_runner():
                 continue
 
             logger.info('🔄 Запуск мониторинга постов...')
-            accounts = [account for account in storage.get_accounts() if not account.is_blocked]
+            accounts = [account for account in storage.get_accounts() if account.mode == 'оба']
             storage.update_monitor_posts_last_run()
 
             all_deleted_posts = []
@@ -288,11 +302,19 @@ async def schedule_monitor_posts_runner():
             accounts_by_id = {}
 
             for account in accounts:
+                if account.is_blocked:
+                    continue
+
                 logger.debug(f'Проверка постов для {account.username}')
-                if account.domain == 'tenchat.ru':
-                    posts = await api.fetch_tenchat_posts(account.username)
-                else:
-                    posts = await api.fetch_user_posts(account.domain, account.user_id)
+
+                try:
+                    if account.domain == 'tenchat.ru':
+                        posts = await api.fetch_tenchat_posts(account.username)
+                    else:
+                        posts = await api.fetch_user_posts(account.domain, account.user_id)
+                except Exception as e:
+                    logger.error(f'Ошибка при получении постов для {account.username}: {e}', exc_info=True)
+                    continue
 
                 parsed_ids = {post['id'] for post in posts}
                 existing_posts = await utils.load_user_posts(account.domain, account.username)
@@ -325,16 +347,19 @@ async def schedule_monitor_posts_runner():
 
                 for account_id, posts in grouped_deleted_posts.items():
                     account = accounts_by_id[account_id]
-                    lines.append(f'\n<code>{account.username}</code> - {len(posts)}:')
+                    lines.append(f'\n{account.username} - {len(posts)}:')
                     for post in posts:
-                        lines.append(f'<code>{post['post_id']}</code> {post['post_url']}')
+                        lines.append(f'{post['post_id']}')
+                    for post in posts:
+                        lines.append(f'{post['post_url']}')
 
                 await bot.send_to_admins('\n'.join(lines))
             else:
                 logger.info('Удалённых постов не обнаружено')
                 await bot.send_to_admins(
                     '\n✅ Мониторинг Статей'
-                    f'\nПроверенных аккаунтов: {len(accounts)}'
+                    f'\nПроверенных аккаунтов: {sum(1 for account in accounts if not account.is_blocked)}'
+                    f'\nЗаблоченных аккаунтов: {sum(1 for account in accounts if account.is_blocked)}'
                     '\n✅ Удаленных URL: 0'
                     '\n\nВсе ОК!'
                 )

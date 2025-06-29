@@ -16,7 +16,7 @@ scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/au
 creds = ServiceAccountCredentials.from_json_keyfile_name('google_credentials.json', scope)
 client = gspread.authorize(creds)
 
-MAIN_SHEET = 'Статистика'
+MAIN_SHEET = 'Статистика по VC, DTF'
 REGULAR_PARSING_WORKSHEET = 'РЕГ.парс'
 MONITOR_ACCOUNTS_WORKSHEET = 'Монит.Акков'
 MONITOR_POSTS_WORKSHEET = 'Монит.Статей'
@@ -334,7 +334,7 @@ def sync_update_monitor_accounts_data(users_data: list[dict]):
     existing_user_cells = run_with_retry(worksheet.row_values, 1)
     existing_users = {}
 
-    for col in range(1, len(existing_user_cells) + 1, 4):
+    for col in range(1, len(existing_user_cells) + 1, 5):
         url = existing_user_cells[col - 1]
         if url:
             existing_users[url] = col

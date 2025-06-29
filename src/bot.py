@@ -44,7 +44,7 @@ def is_admin(user_id: int) -> bool:
 
 
 async def send_to_admins(text: str, **kwargs):
-    if len(text) >= 100:
+    if len(text) >= 3000:
         text_lines = text.strip().splitlines()
         text_bytes = BytesIO(text.encode('utf-8'))
 
