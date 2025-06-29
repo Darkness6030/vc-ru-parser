@@ -1,9 +1,11 @@
+from io import BytesIO
 from typing import List
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BufferedInputFile
 from aiogram.utils.callback_answer import CallbackAnswerMiddleware
 from pydantic import BaseModel
 from rewire import config, simple_plugin, DependenciesModule
@@ -42,8 +44,22 @@ def is_admin(user_id: int) -> bool:
 
 
 async def send_to_admins(text: str, **kwargs):
-    for admin_id in Config.admin_ids:
-        await get_bot().send_message(admin_id, text, **kwargs)
+    if len(text) >= 100:
+        text_lines = text.strip().splitlines()
+        text_bytes = BytesIO(text.encode('utf-8'))
+
+        caption_lines = text_lines[:2]
+        caption_text = '\n'.join(caption_lines) + '\n...'
+
+        for admin_id in Config.admin_ids:
+            await get_bot().send_document(
+                admin_id,
+                BufferedInputFile(text_bytes.getvalue(), filename='message.txt'),
+                caption=caption_text
+            )
+    else:
+        for admin_id in Config.admin_ids:
+            await get_bot().send_message(admin_id, text, **kwargs)
 
 
 def get_bot() -> Bot:

@@ -351,7 +351,7 @@ def sync_update_monitor_accounts_data(users_data: list[dict]):
         if url in existing_users:
             user_col = existing_users[url]
         else:
-            user_col = max(existing_users.values()) + 4 if existing_users else 1
+            user_col = max(existing_users.values()) + 5 if existing_users else 1
             existing_users[url] = user_col
 
             col_letter = rowcol_to_a1(1, user_col).replace('1', '')

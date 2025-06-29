@@ -213,7 +213,7 @@ async def schedule_monitor_accounts_runner():
                         logger.info(f'Обнаружено изменение URL для {username}: {account.last_url} -> {user_data['url']}')
                         if account.last_url:
                             url_changed_accounts.append({
-                                'user_id': account.user_id,
+                                'user_url': account.url,
                                 'old_url': account.last_url,
                                 'new_url': user_data['url'],
                             })
@@ -259,7 +259,7 @@ async def schedule_monitor_accounts_runner():
                 if url_changed_accounts:
                     message_lines.append('\nСмена URL:')
                     for item in url_changed_accounts:
-                        message_lines.append(f'<code>{item['user_id']}</code>: {item['old_url']} > {item['new_url']}')
+                        message_lines.append(f'{item['user_url']}: {item['old_url']} > {item['new_url']}')
 
                 await bot.send_to_admins('\n'.join(message_lines))
 
