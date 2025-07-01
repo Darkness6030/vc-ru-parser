@@ -75,8 +75,10 @@ def should_regular_parsing_run(settings: RegularParsingSettings) -> bool:
 
     now = datetime.now(MOSCOW_TIMEZONE)
     if settings.last_run:
-        last_run = settings.last_run.replace(tzinfo=MOSCOW_TIMEZONE)
+        last_run = settings.last_run.astimezone(MOSCOW_TIMEZONE)
         days_passed = (now.date() - last_run.date()).days
+
+        logger.info(days_passed)
         if days_passed < settings.periodicity.interval:
             return False
 
@@ -92,9 +94,11 @@ def should_monitor_accounts_run(settings: MonitorAccountsSettings) -> bool:
 
     now = datetime.now(MOSCOW_TIMEZONE)
     if settings.last_run:
-        last_run = settings.last_run.replace(tzinfo=MOSCOW_TIMEZONE)
+        last_run = settings.last_run.astimezone(MOSCOW_TIMEZONE)
         minutes_passed = (now - last_run).total_seconds() / 60
-        if minutes_passed < settings.periodicity:
+
+        logger.info(minutes_passed)
+        if minutes_passed <= settings.periodicity:
             return False
 
     return True
@@ -115,6 +119,8 @@ def should_monitor_posts_run(settings: MonitorPostsSettings) -> bool:
     for target_time in settings.periodicity:
         target_datetime = MOSCOW_TIMEZONE.localize(datetime.combine(today, target_time))
         time_difference = abs((target_datetime - now).total_seconds())
+
+        logger.info(time_difference)
         if time_difference <= 60:
             return True
 
@@ -164,10 +170,6 @@ async def schedule_regular_parsing_runner():
                 for index, account in enumerate(failed_accounts, start=1):
                     result_lines.append(f'{account.url} ({account.name or account.username})')
 
-                for account in failed_accounts:
-                    account.is_blocked = True
-                    storage.update_account(account.id, is_blocked=True)
-
                 inline_keyboard.button(text='❌ Удалить невалид', callback_data=DeleteInvalidCallback())
                 storage.set_last_failed_accounts(failed_accounts)
 
@@ -207,9 +209,11 @@ async def schedule_monitor_accounts_runner():
                     user_data = await api.fetch_tenchat_user_data(username) \
                         if domain == 'tenchat.ru' else \
                         await api.fetch_user_data(domain, id=user_id)
+
+                    assert user_data
                 except Exception as e:
                     logger.error(f'Ошибка при получении данных для {account.username}: {e}', exc_info=True)
-                    user_data = {'url': account.last_url, 'name': account.name, 'is_blocked': True}
+                    continue
 
                 url_changed = user_data['url'] != account.last_url
                 blocked_changed = user_data['is_blocked'] != account.is_blocked
@@ -231,7 +235,7 @@ async def schedule_monitor_accounts_runner():
                     status = 'заблокирован' if user_data['is_blocked'] else 'разблокирован'
                     logger.warning(f'Обнаружено изменение статуса блокировки для {username}: {status}')
                     if user_data['is_blocked']:
-                        blocked_accounts.append(account.username)
+                        blocked_accounts.append(account)
 
                     account.name = user_data['name']
                     account.is_blocked = user_data['is_blocked']
@@ -267,8 +271,8 @@ async def schedule_monitor_accounts_runner():
 
                 if blocked_accounts:
                     message_lines.append('\nЗаблочены:')
-                    for username in blocked_accounts:
-                        message_lines.append(f'{username}')
+                    for account in blocked_accounts:
+                        message_lines.append(account.url)
 
                 if url_changed_accounts:
                     message_lines.append('\nСмена URL:')

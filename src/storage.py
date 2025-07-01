@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, time
+from datetime import datetime, time, UTC
 from typing import List, Optional
 
 from pydantic import BaseModel
@@ -138,7 +138,7 @@ def set_regular_parsing_periodicity(interval: int, time: time):
 
 def update_regular_parsing_last_run():
     storage_data = load_storage()
-    storage_data.regular_parsing.last_run = datetime.now()
+    storage_data.regular_parsing.last_run = datetime.now(UTC)
     save_storage(storage_data)
 
 
@@ -161,7 +161,7 @@ def toggle_monitor_accounts() -> bool:
 
 def update_monitor_accounts_last_run():
     storage_data = load_storage()
-    storage_data.monitor_accounts.last_run = datetime.now()
+    storage_data.monitor_accounts.last_run = datetime.now(UTC)
     save_storage(storage_data)
 
 
@@ -184,5 +184,5 @@ def toggle_monitor_posts() -> bool:
 
 def update_monitor_posts_last_run():
     storage_data = load_storage()
-    storage_data.monitor_posts.last_run = datetime.now()
+    storage_data.monitor_posts.last_run = datetime.now(UTC)
     save_storage(storage_data)
