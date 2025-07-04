@@ -1,4 +1,5 @@
 import asyncio
+import os
 import random
 import time
 from contextlib import suppress
@@ -6,6 +7,7 @@ from datetime import datetime, timedelta
 
 import gspread
 import pytz
+from dotenv import load_dotenv
 from gspread.exceptions import WorksheetNotFound
 from gspread.utils import *
 from gspread_formatting import *
@@ -16,10 +18,11 @@ scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/au
 creds = ServiceAccountCredentials.from_json_keyfile_name('google_credentials.json', scope)
 client = gspread.authorize(creds)
 
-MAIN_SHEET = 'Статистика по VC, DTF'
-REGULAR_PARSING_WORKSHEET = 'РЕГ.парс'
-MONITOR_ACCOUNTS_WORKSHEET = 'Монит.Акков'
-MONITOR_POSTS_WORKSHEET = 'Монит.Статей'
+
+MAIN_SHEET = os.getenv('MAIN_SHEET')
+REGULAR_PARSING_WORKSHEET = os.getenv('REGULAR_PARSING_WORKSHEET')
+MONITOR_ACCOUNTS_WORKSHEET = os.getenv('MONITOR_ACCOUNTS_WORKSHEET')
+MONITOR_POSTS_WORKSHEET = os.getenv('MONITOR_POSTS_WORKSHEET')
 
 MOSCOW_TIMEZONE = pytz.timezone('Europe/Moscow')
 GOOGLE_SHEETS_EPOCH = datetime(1899, 12, 30)
@@ -546,6 +549,34 @@ async def update_monitor_posts_data(posts_data: list[dict]):
     await asyncio.to_thread(sync_update_monitor_posts_data, posts_data)
 
 
+def sync_get_monitor_posts_ids() -> List[int]:
+    spreadsheet = client.open(MAIN_SHEET)
+    worksheet = spreadsheet.worksheet(MONITOR_POSTS_WORKSHEET)
+
+    data = run_with_retry(worksheet.get_all_values)
+    if not data or len(data) < 2:
+        return []
+
+    try:
+        header = data[0]
+        id_index = header.index('ID')
+    except ValueError:
+        raise RuntimeError('Не найден столбец "ID" в листе мониторинга постов.')
+
+    monitor_post_ids = []
+    for row in data[1:]:
+        if len(row) > id_index:
+            post_id = row[id_index].strip()
+            if post_id:
+                monitor_post_ids.append(int(post_id))
+
+    return monitor_post_ids
+
+
+async def get_monitor_posts_ids() -> List[int]:
+    return await asyncio.to_thread(sync_get_monitor_posts_ids)
+
+
 def run_with_retry(func, *args, attempt=5, **kwargs):
     for attempt in range(attempt):
         try:
@@ -556,4 +587,3 @@ def run_with_retry(func, *args, attempt=5, **kwargs):
             time.sleep(wait)
 
     raise RuntimeError(f'❌ Превышено число попыток вызова {func.__name__}', e)
-

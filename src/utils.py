@@ -2,8 +2,10 @@ import json
 import os
 import re
 from datetime import datetime, date
-from typing import Any, Optional, Tuple
-from urllib.parse import unquote, urlparse, parse_qs
+from typing import Any
+from typing import Optional, Tuple
+from urllib.parse import unquote, parse_qs, urlunparse
+from urllib.parse import urlparse
 
 import pytz
 from aiohttp import ClientSession
@@ -21,8 +23,8 @@ def parse_time(text: str):
         return None
 
 
-async def parse_url(args: str) -> Optional[Tuple[Optional[str], Optional[str], Optional[int]]]:
-    parsed = urlparse(args)
+async def parse_url(url: str) -> Optional[Tuple[str, str, str]]:
+    parsed = urlparse(url)
     domain = parsed.netloc.lower()
     path = parsed.path.strip('/')
 
@@ -30,7 +32,14 @@ async def parse_url(args: str) -> Optional[Tuple[Optional[str], Optional[str], O
         return None
 
     if domain == 'tenchat.ru':
-        return domain, path, int(path) if path.isdigit() else None
+        default_username = await api.fetch_tenchat_default_username(path)
+        username = default_username or path
+
+        if default_username:
+            parsed = parsed._replace(path=f'/{default_username}')
+            url = urlunparse(parsed)
+
+        return url, domain, username  # type: ignore
 
     match = re.match(r'(id(\d+))|u/(\d+)-([\w\-]+)|([\w\-]+)', path)
     if not match:
@@ -39,14 +48,7 @@ async def parse_url(args: str) -> Optional[Tuple[Optional[str], Optional[str], O
     user_id = match.group(2) or match.group(3)
     username = match.group(4) or match.group(5) or f'id{user_id}'
 
-    if not user_id:
-        user_data = await api.fetch_user_data(domain, uri=username)
-        if not user_data:
-            return None, None, None
-
-        user_id = user_data['id']
-
-    return domain, username, int(user_id) if user_id else None
+    return url, domain, username
 
 
 def replace_redirect_links(href: str) -> str:

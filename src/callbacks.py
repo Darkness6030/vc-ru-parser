@@ -30,6 +30,7 @@ class RegularParsingCallback(CallbackData, prefix='regular_parsing'):
 
 class ParseNowCallback(CallbackData, prefix='parse_now'):
     mode: Optional[str]
+    blocked_mode: Optional[str] = None
 
 
 class AccountsCallback(CallbackData, prefix='accounts'):
@@ -62,6 +63,7 @@ class DeleteAccountCallback(CallbackData, prefix='delete_account'):
 
 class ParseAccountCallback(CallbackData, prefix='parse_account'):
     account_id: int
+    skip_validation: bool = False
 
 
 class DeleteInvalidCallback(CallbackData, prefix='delete_invalid'):
@@ -110,16 +112,34 @@ class MonitorPostsPeriodicityCallback(CallbackData, prefix='monitor_posts_period
     pass
 
 
+class MonitorPostsAccountsModeCallback(CallbackData, prefix='monitor_posts_accounts_mode'):
+    accounts_mode: Optional[str] = None
+
+
 class MonitorPostsSitesCallback(CallbackData, prefix='monitor_posts_sites'):
     toggle_dtf: bool = False
     toggle_vc: bool = False
     toggle_tenchat: bool = False
 
 
+class ParseBlockedConfirmCallback(CallbackData, prefix='parse_confirm'):
+    mode: str
+    username: str
+
+
+class ParseBlockedCancelCallback(CallbackData, prefix='parse_cancel'):
+    pass
+
+
+class ParseIDsCallback(CallbackData, prefix='parse_ids'):
+    pass
+
+
 menu_keyboard = InlineKeyboardBuilder() \
-    .button(text='Выгрузить данные в JSON', callback_data=LoadModeCallback(mode='json')) \
-    .button(text='Выгрузить данные в Google таблицы', callback_data=LoadModeCallback(mode='google')) \
+    .button(text='Выгрузить данные в JSON', callback_data=LoadModeCallback(mode='server')) \
+    .button(text='Выгрузить данные в Google таблицы', callback_data=LoadModeCallback(mode='sheets')) \
     .button(text='Парсинг по расписанию', callback_data=RegularParsingCallback()) \
+    .button(text='Получить ID', callback_data=ParseIDsCallback()) \
     .adjust(1) \
     .as_markup()
 

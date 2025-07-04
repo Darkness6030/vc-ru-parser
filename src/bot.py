@@ -55,7 +55,8 @@ async def send_to_admins(text: str, **kwargs):
             await get_bot().send_document(
                 admin_id,
                 BufferedInputFile(text_bytes.getvalue(), filename='message.txt'),
-                caption=caption_text
+                caption=caption_text,
+                **kwargs
             )
     else:
         for admin_id in Config.admin_ids:

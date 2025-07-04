@@ -169,3 +169,4 @@ google_credentials.json
 
 # Output files
 /output/
+/storage/tenchat_cookies.json

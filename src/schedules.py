@@ -16,17 +16,18 @@ SEMAPHORE = asyncio.Semaphore(1)
 MOSCOW_TIMEZONE = pytz.timezone('Europe/Moscow')
 
 
-async def parse_account_posts(account: Account, mode: Optional[str] = None):
+async def parse_account_posts(account: Account, mode: Optional[str] = None, ignore_blocked: bool = False):
     async with SEMAPHORE:
-        domain, username, user_id = account.domain, account.username, account.user_id
+        domain, username = account.domain, account.username
         user_data = await api.fetch_tenchat_user_data(username) \
             if domain == 'tenchat.ru' else \
-            await api.fetch_user_data(domain, id=user_id)
+            await api.fetch_user_data(domain, username)
 
-        account.name = user_data['name']
-        storage.update_account(account.id, url=account.url, name=account.name)
+        if 'name' in user_data:
+            account.name = user_data['name']
+            storage.update_account(account.id, url=account.url, name=account.name)
 
-        if user_data['is_blocked']:
+        if not ignore_blocked and user_data['is_blocked']:
             logger.error(f'Аккаунт {username} заблокирован')
             raise
 
@@ -35,14 +36,30 @@ async def parse_account_posts(account: Account, mode: Optional[str] = None):
             if domain == 'tenchat.ru':
                 user_posts = await api.fetch_tenchat_posts(username)
             else:
-                user_posts = await api.fetch_user_posts(domain, user_id)
+                user_posts = await api.fetch_user_posts(domain, username)
         except Exception as e:
             logger.error(f'Ошибка при получении постов для {username}: {e}', exc_info=True)
             raise
 
         logger.info(f'Получены {len(user_posts)} постов для {username}')
-        if not user_posts:
-            return
+        deleted_posts = []
+
+        if account.mode == 'оба' and not account.is_blocked:
+            try:
+                existing_posts = await utils.load_user_posts(domain, username)
+                monitor_posts_ids = await sheets.get_monitor_posts_ids()
+
+                parsed_ids = {post['id'] for post in user_posts}
+                deleted_posts = [
+                    {
+                        'account_url': account.url,
+                        'name': account.name or account.username,
+                        **post
+                    }
+                    for post in existing_posts if post['post_id'] not in parsed_ids and post['post_id'] not in monitor_posts_ids
+                ]
+            except Exception as e:
+                logger.error(f'Ошибка при мониторинге постов для {username}: {e}', exc_info=True)
 
         try:
             mode = mode or account.mode
@@ -63,10 +80,11 @@ async def parse_account_posts(account: Account, mode: Optional[str] = None):
                 await utils.unload_user_posts(domain, username, user_posts)
 
                 logger.info(f'Данные {username} выгружены в Google таблицу')
-
         except Exception as e:
             logger.error(f'Ошибка при обработке данных для {username}: {e}', exc_info=True)
             raise
+
+        return deleted_posts
 
 
 def should_regular_parsing_run(settings: RegularParsingSettings) -> bool:
@@ -78,7 +96,6 @@ def should_regular_parsing_run(settings: RegularParsingSettings) -> bool:
         last_run = settings.last_run.astimezone(MOSCOW_TIMEZONE)
         days_passed = (now.date() - last_run.date()).days
 
-        logger.info(days_passed)
         if days_passed < settings.periodicity.interval:
             return False
 
@@ -97,7 +114,6 @@ def should_monitor_accounts_run(settings: MonitorAccountsSettings) -> bool:
         last_run = settings.last_run.astimezone(MOSCOW_TIMEZONE)
         minutes_passed = (now - last_run).total_seconds() / 60
 
-        logger.info(minutes_passed)
         if minutes_passed <= settings.periodicity:
             return False
 
@@ -111,16 +127,10 @@ def should_monitor_posts_run(settings: MonitorPostsSettings) -> bool:
     now = datetime.now(MOSCOW_TIMEZONE)
     today = now.date()
 
-    if settings.last_run and settings.last_run.date() == today:
-        latest_time = max(settings.periodicity)
-        if now.time() < latest_time:
-            return False
-
     for target_time in settings.periodicity:
         target_datetime = MOSCOW_TIMEZONE.localize(datetime.combine(today, target_time))
         time_difference = abs((target_datetime - now).total_seconds())
 
-        logger.info(time_difference)
         if time_difference <= 60:
             return True
 
@@ -135,24 +145,56 @@ async def schedule_regular_parsing_runner():
                 await asyncio.sleep(10)
                 continue
 
-            logger.info(f'🚀 Начат плановый парсинг {len(storage.get_accounts())} аккаунтов...')
+            accounts = storage.get_accounts()
+            blocked_accounts = [account for account in accounts if account.is_blocked]
+            active_accounts = [account for account in accounts if not account.is_blocked]
+
+            logger.info(f'🚀 Начат плановый парсинг {len(active_accounts)} аккаунтов...')
             storage.update_regular_parsing_last_run()
 
             success_count = 0
             failed_count = 0
             failed_accounts = []
 
+            accounts_by_id = {account.id: account for account in accounts}
+            all_deleted_posts = []
+            grouped_deleted_posts = {}
+
             async def safe_parse(account):
                 nonlocal success_count, failed_count
                 try:
-                    await parse_account_posts(account)
+                    deleted_posts = await parse_account_posts(account)
+                    if deleted_posts:
+                        all_deleted_posts.extend(deleted_posts)
+                        grouped_deleted_posts[account.id] = deleted_posts
                     success_count += 1
                 except Exception:
                     failed_count += 1
                     failed_accounts.append(account)
 
-            tasks = [safe_parse(account) for account in storage.get_accounts() if not account.is_blocked]
+            tasks = [safe_parse(account) for account in active_accounts]
             await asyncio.gather(*tasks)
+
+            if grouped_deleted_posts:
+                total_deleted = len(all_deleted_posts)
+                logger.warning(f'Обнаружено {total_deleted} удалённых постов')
+
+                lines = [
+                    '✅ Мониторинг Статей',
+                    f'Проверенных аккаунтов: {len(active_accounts)}',
+                    f'Заблоченных аккаунтов: {len(blocked_accounts)}',
+                    f'❌ Удаленных URL: {total_deleted}'
+                ]
+
+                for account_id, posts in grouped_deleted_posts.items():
+                    account = accounts_by_id[account_id]
+                    lines.append(f'\n{account.url} - {len(posts)}:')
+                    for post in posts:
+                        lines.append(f'{post["post_id"]}')
+                    for post in posts:
+                        lines.append(f'{post["post_url"]}')
+
+                await bot.send_to_admins('\n'.join(lines))
 
             result_lines = [
                 f'✅ Парсинг завершён.',
@@ -171,8 +213,9 @@ async def schedule_regular_parsing_runner():
                     result_lines.append(f'{account.url} ({account.name or account.username})')
 
                 inline_keyboard.button(text='❌ Удалить невалид', callback_data=DeleteInvalidCallback())
-                storage.set_last_failed_accounts(failed_accounts)
+                storage.add_last_failed_accounts(failed_accounts)
 
+            await sheets.update_monitor_posts_data(all_deleted_posts)
             await bot.send_to_admins(
                 '\n'.join(result_lines),
                 reply_markup=inline_keyboard.adjust(2).as_markup()
@@ -202,13 +245,13 @@ async def schedule_monitor_accounts_runner():
             url_changed_accounts = []
 
             for account in accounts:
-                domain, username, user_id = account.domain, account.username, account.user_id
-                logger.debug(f'Проверка аккаунта {username} (ID: {user_id})')
+                domain, username = account.domain, account.username
+                logger.debug(f'Проверка аккаунта {username} ({domain})')
 
                 try:
                     user_data = await api.fetch_tenchat_user_data(username) \
                         if domain == 'tenchat.ru' else \
-                        await api.fetch_user_data(domain, id=user_id)
+                        await api.fetch_user_data(domain, username)
 
                     assert user_data
                 except Exception as e:
@@ -279,10 +322,21 @@ async def schedule_monitor_accounts_runner():
                     for item in url_changed_accounts:
                         message_lines.append(f'{item['user_url']} : {item['old_url']} > {item['new_url']}')
 
-                await bot.send_to_admins('\n'.join(message_lines))
+                inline_keyboard = InlineKeyboardBuilder()
+                if blocked_accounts:
+                    inline_keyboard.button(text='❌ Удалить невалид', callback_data=DeleteInvalidCallback())
+
+                await bot.send_to_admins(
+                    '\n'.join(message_lines),
+                    reply_markup=inline_keyboard.as_markup()
+                )
+
+            if blocked_accounts:
+                storage.add_last_failed_accounts(blocked_accounts)
 
             if changed_accounts:
                 await sheets.update_monitor_accounts_data(changed_accounts)
+
         except Exception as e:
             logger.exception(f'Ошибка в мониторинге аккаунтов: {e}', exc_info=True)
 
@@ -292,30 +346,34 @@ async def schedule_monitor_accounts_runner():
 async def schedule_monitor_posts_runner():
     while True:
         try:
-            monitor_posts_settings = storage.get_monitor_posts_settings()
-            if not should_monitor_posts_run(monitor_posts_settings):
+            posts_settings = storage.get_monitor_posts_settings()
+            if not should_monitor_posts_run(posts_settings):
                 await asyncio.sleep(10)
                 continue
 
-            logger.info('🔄 Запуск мониторинга постов...')
-            accounts = [account for account in storage.get_accounts() if account.mode == 'оба']
+            accounts = [
+                account for account in storage.get_accounts()
+                if posts_settings.accounts_mode == 'все' or posts_settings.accounts_mode == account.mode
+            ]
+
+            blocked_accounts = [account for account in accounts if account.is_blocked]
+            active_accounts = [account for account in accounts if not account.is_blocked]
+
+            logger.info(f'🔄 Запускаем мониторинг постов {len(active_accounts)} аккаунтов...')
             storage.update_monitor_posts_last_run()
 
+            monitor_posts_ids = await sheets.get_monitor_posts_ids()
+            accounts_by_id = {account.id: account for account in accounts}
             all_deleted_posts = []
             grouped_deleted_posts = {}
-            accounts_by_id = {}
 
-            for account in accounts:
-                if account.is_blocked:
-                    continue
-
-                logger.debug(f'Проверка постов для {account.username}')
-
+            for account in active_accounts:
                 try:
+                    logger.debug(f'Проверка постов для {account.username}')
                     if account.domain == 'tenchat.ru':
                         posts = await api.fetch_tenchat_posts(account.username)
                     else:
-                        posts = await api.fetch_user_posts(account.domain, account.user_id)
+                        posts = await api.fetch_user_posts(account.domain, account.username)
                 except Exception as e:
                     logger.error(f'Ошибка при получении постов для {account.username}: {e}', exc_info=True)
                     continue
@@ -325,7 +383,7 @@ async def schedule_monitor_posts_runner():
 
                 deleted_posts = []
                 for old_post in existing_posts:
-                    if old_post['post_id'] not in parsed_ids:
+                    if old_post['post_id'] not in parsed_ids and old_post['post_id'] not in monitor_posts_ids:
                         logger.info(f'Обнаружен удалённый пост: {old_post['post_id']} у {account.username}')
                         deleted_posts.append({
                             'account_url': account.url,
@@ -336,34 +394,33 @@ async def schedule_monitor_posts_runner():
                 if deleted_posts:
                     all_deleted_posts.extend(deleted_posts)
                     grouped_deleted_posts[account.id] = deleted_posts
-                    accounts_by_id[account.id] = account
 
             if grouped_deleted_posts:
                 total_deleted = len(all_deleted_posts)
-                logger.warning(f'Обнаружено {len(all_deleted_posts)} удалённых постов')
+                logger.warning(f'Обнаружено {total_deleted} удалённых постов')
 
-                total_accounts = len(accounts)
                 lines = [
                     '✅ Мониторинг Статей',
-                    f'Проверенных аккаунтов: {total_accounts}',
+                    f'Проверенных аккаунтов: {len(active_accounts)}',
+                    f'Заблоченных аккаунтов: {len(blocked_accounts)}',
                     f'❌ Удаленных URL: {total_deleted}'
                 ]
 
                 for account_id, posts in grouped_deleted_posts.items():
                     account = accounts_by_id[account_id]
-                    lines.append(f'\n{account.username} - {len(posts)}:')
+                    lines.append(f'\n{account.url} - {len(posts)}:')
                     for post in posts:
-                        lines.append(f'{post['post_id']}')
+                        lines.append(f'{post["post_id"]}')
                     for post in posts:
-                        lines.append(f'{post['post_url']}')
+                        lines.append(f'{post["post_url"]}')
 
                 await bot.send_to_admins('\n'.join(lines))
             else:
                 logger.info('Удалённых постов не обнаружено')
                 await bot.send_to_admins(
                     '\n✅ Мониторинг Статей'
-                    f'\nПроверенных аккаунтов: {sum(1 for account in accounts if not account.is_blocked)}'
-                    f'\nЗаблоченных аккаунтов: {sum(1 for account in accounts if account.is_blocked)}'
+                    f'\nПроверенных аккаунтов: {len(active_accounts)}'
+                    f'\nЗаблоченных аккаунтов: {len(blocked_accounts)}'
                     '\n✅ Удаленных URL: 0'
                     '\n\nВсе ОК!'
                 )

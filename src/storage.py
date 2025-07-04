@@ -14,7 +14,6 @@ class Account(BaseModel):
     domain: str
     username: str
     name: Optional[str] = None
-    user_id: Optional[int] = None
     last_post_id: Optional[int] = None
     last_url: Optional[str] = None
     is_blocked: bool = False
@@ -45,10 +44,17 @@ class MonitorAccountsSettings(BaseModel):
 class MonitorPostsSettings(BaseModel):
     enabled: bool = False
     periodicity: List[time] = []
+    accounts_mode: str = 'оба'
     dtf_enabled: bool = False
     vc_enabled: bool = False
     tenchat_enabled: bool = False
     last_run: Optional[datetime] = None
+
+
+class TenchatAuthData(BaseModel):
+    access_token: str
+    refresh_token: str
+    expires_at: float
 
 
 class StorageData(BaseModel):
@@ -57,6 +63,7 @@ class StorageData(BaseModel):
     regular_parsing: RegularParsingSettings = RegularParsingSettings()
     monitor_accounts: MonitorAccountsSettings = MonitorAccountsSettings()
     monitor_posts: MonitorPostsSettings = MonitorPostsSettings()
+    tenchat_auth_data: Optional[TenchatAuthData] = None
 
 
 def load_storage() -> StorageData:
@@ -109,9 +116,15 @@ def get_last_failed_accounts() -> List[Account]:
     return load_storage().last_failed_accounts
 
 
-def set_last_failed_accounts(last_failed_accounts: List[Account]):
+def add_last_failed_accounts(last_failed_accounts: List[Account]):
     storage_data = load_storage()
-    storage_data.last_failed_accounts = last_failed_accounts
+    storage_data.last_failed_accounts.extend(last_failed_accounts)
+    save_storage(storage_data)
+
+
+def clear_last_failed_accounts():
+    storage_data = load_storage()
+    storage_data.last_failed_accounts = []
     save_storage(storage_data)
 
 
@@ -185,4 +198,14 @@ def toggle_monitor_posts() -> bool:
 def update_monitor_posts_last_run():
     storage_data = load_storage()
     storage_data.monitor_posts.last_run = datetime.now(UTC)
+    save_storage(storage_data)
+
+
+def get_tenchat_auth_data() -> Optional[TenchatAuthData]:
+    return load_storage().tenchat_auth_data
+
+
+def set_tenchat_auth_data(tenchat_auth_data: Optional[TenchatAuthData]):
+    storage_data = load_storage()
+    storage_data.tenchat_auth_data = tenchat_auth_data
     save_storage(storage_data)
